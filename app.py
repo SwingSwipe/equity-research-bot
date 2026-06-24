@@ -15,6 +15,8 @@ import pandas as pd
 import streamlit as st
 
 from analyst import get_snapshot, compute_bias, get_market_news, num, pct
+from catalysts import (get_movers, get_upcoming_earnings,
+                       get_recent_surprises, get_ipos)
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
@@ -37,6 +39,20 @@ def load(ticker: str):
 @st.cache_data(ttl=300, show_spinner=False)
 def load_market_news():
     return get_market_news(limit=25), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_radar():
+    """All the catalyst feeds for the Radar tab, in one cached pull."""
+    return {
+        "gainers": get_movers("day_gainers", 15),
+        "losers": get_movers("day_losers", 15),
+        "actives": get_movers("most_actives", 15),
+        "earnings": get_upcoming_earnings(days=7),
+        "surprises": get_recent_surprises(days=3),
+        "ipos": get_ipos(),
+        "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 LEAN_COLORS = {
@@ -78,7 +94,8 @@ st.title("📈 Stock Research Bot")
 st.caption("Live news, earnings, price, and a transparent long/short lean. "
            "Research synthesis, **not** investment advice.")
 
-tab_research, tab_market = st.tabs(["🔍 Stock Research", "🌎 Market News"])
+tab_research, tab_radar, tab_market = st.tabs(
+    ["🔍 Stock Research", "📡 Radar", "🌎 Market News"])
 
 # ===========================================================================
 # TAB 1: single-stock research
@@ -177,7 +194,90 @@ with tab_research:
                 st.write(snap["summary"])
 
 # ===========================================================================
-# TAB 2: general business / market news
+# TAB 2: Radar -- catalyst-driven idea discovery
+# ===========================================================================
+def show_movers(df, label):
+    """Render a movers table with market cap in $B and tidy columns."""
+    st.markdown(f"**{label}**")
+    if df is None or df.empty:
+        st.caption("None returned right now.")
+        return
+    d = df.copy()
+    if "Mkt Cap" in d:
+        d["Mkt Cap"] = (d["Mkt Cap"] / 1e9).round(2)   # -> billions
+    st.dataframe(
+        d, hide_index=True, use_container_width=True,
+        column_config={
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "% Change": st.column_config.NumberColumn(format="%.2f%%"),
+            "Mkt Cap": st.column_config.NumberColumn("Mkt Cap ($B)", format="%.1f"),
+        },
+    )
+
+
+with tab_radar:
+    st.markdown("### 📡 What's worth a look right now")
+    st.caption("Stocks with a **catalyst** — a reason they're in play today. "
+               "A catalyst is a reason to *research*, not a reason to buy. "
+               "Spot something interesting? Type its ticker into the 🔍 Stock Research tab.")
+
+    try:
+        with st.spinner("Scanning the market…"):
+            radar = load_radar()
+    except Exception as e:
+        st.error(f"Couldn't load radar feeds: {e}")
+        radar = None
+
+    if radar:
+        st.caption(f"Data as of {radar['at']}")
+
+        # --- earnings ---
+        st.markdown("#### 📅 Reporting earnings in the next 7 days")
+        st.caption("Timing: BMO = before market open · AMC = after market close. "
+                   "Earnings = the biggest scheduled catalyst there is.")
+        e = radar["earnings"]
+        if e is not None and not e.empty:
+            ev = e.copy()
+            if "Marketcap" in ev:
+                ev["Marketcap"] = (ev["Marketcap"] / 1e9).round(2)
+            st.dataframe(ev, hide_index=True, use_container_width=True,
+                         column_config={"Marketcap": st.column_config.NumberColumn(
+                             "Mkt Cap ($B)", format="%.1f")})
+        else:
+            st.caption("No upcoming earnings returned.")
+
+        # --- recent surprises ---
+        st.markdown("#### 🎯 Just reported — beats & misses")
+        st.caption("Surprise(%) = how far reported EPS beat (+) or missed (–) estimates.")
+        s = radar["surprises"]
+        if s is not None and not s.empty:
+            st.dataframe(s, hide_index=True, use_container_width=True,
+                         column_config={"Surprise(%)": st.column_config.NumberColumn(
+                             format="%.1f%%")})
+        else:
+            st.caption("No recent reports returned.")
+
+        # --- movers ---
+        st.markdown("#### 🔥 Today's movers")
+        mleft, mright = st.columns(2)
+        with mleft:
+            show_movers(radar["gainers"], "🟢 Top gainers")
+        with mright:
+            show_movers(radar["losers"], "🔴 Top losers")
+        show_movers(radar["actives"], "🔁 Most active")
+
+        # --- IPOs ---
+        st.markdown("#### 🆕 IPOs (recent & upcoming)")
+        st.caption("Brand-new listings. Fund/ETF launches are filtered out to show real companies.")
+        ipo = radar["ipos"]
+        if ipo is not None and not ipo.empty:
+            st.dataframe(ipo, hide_index=True, use_container_width=True)
+        else:
+            st.caption("No company IPOs in the window right now.")
+
+
+# ===========================================================================
+# TAB 3: general business / market news
 # ===========================================================================
 with tab_market:
     st.markdown("### 🌎 Today's business & market headlines")
