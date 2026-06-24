@@ -2,11 +2,15 @@
 app.py  --  the web UI for the stock research bot.
 
 Run it with:   python -m streamlit run app.py
-Then your browser opens; type a ticker (e.g. AAPL) and hit Enter.
 
-This file is ONLY presentation. All the thinking lives in analyst.py.
-Streamlit re-runs this whole script top-to-bottom on every interaction --
-that's its model: your script *is* the page.
+This file is ONLY presentation. All the thinking lives in analyst.py /
+catalysts.py. Streamlit re-runs this whole script top-to-bottom on every
+interaction -- your script *is* the page.
+
+NAVIGATION NOTE: we use a segmented_control (not st.tabs) for the three views,
+because st.tabs can't be switched from code. With segmented_control the active
+view lives in st.session_state, so clicking a ticker on the Radar can set the
+view to "Stock Research" and load that ticker -- the whole point of this build.
 """
 
 from datetime import datetime
@@ -21,12 +25,12 @@ from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
+VIEWS = ["🔍 Stock Research", "📡 Radar", "🌎 Market News"]
+
+
 # ---------------------------------------------------------------------------
-# DATA LOADERS (cached). On free Yahoo data, quotes are delayed ~15 min and
-# refreshed live every time the cache expires. ttl=300 -> re-pull after 5 min;
-# the sidebar Refresh button force-clears it for an instant re-pull.
-# The fetched-at timestamp is captured *inside* the cached call, so it honestly
-# reflects when the data was actually pulled, not when the page re-rendered.
+# DATA LOADERS (cached). Quotes are ~15 min delayed on free Yahoo data; the
+# cache re-pulls every 5 min, and the sidebar Refresh button forces it.
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def load(ticker: str):
@@ -43,7 +47,6 @@ def load_market_news():
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_radar():
-    """All the catalyst feeds for the Radar tab, in one cached pull."""
     return {
         "gainers": get_movers("day_gainers", 15),
         "losers": get_movers("day_losers", 15),
@@ -62,7 +65,6 @@ LEAN_COLORS = {
 
 
 def news_item(n):
-    """Render one news story (used by both tabs)."""
     title = n["title"] or "(untitled)"
     meta = " · ".join(x for x in [n.get("publisher"), (n.get("date") or "")[:10]] if x)
     link = f"[{title}]({n['url']})" if n.get("url") else f"**{title}**"
@@ -72,11 +74,54 @@ def news_item(n):
         st.caption(n["summary"])
 
 
+def go_to_research(ticker: str):
+    """Queue a jump to the Stock Research view with this ticker loaded.
+
+    We can't set the 'view'/'ticker' widget state directly here (Streamlit
+    forbids changing a widget's value after it's been created this run). So we
+    stash the request in *pending* keys; the top of the next run applies them
+    BEFORE the widgets are built. Bumping nav_token gives the Radar tables fresh
+    keys so their old row-selection doesn't immediately re-trigger this jump.
+    """
+    st.session_state._pending_ticker = ticker
+    st.session_state._pending_view = VIEWS[0]
+    st.session_state.nav_token += 1
+    st.rerun()
+
+
+def selectable_table(df, base_key, column_config=None):
+    """Show a dataframe whose rows are clickable; return the clicked ticker."""
+    if df is None or df.empty:
+        st.caption("None returned right now.")
+        return None
+    key = f"{base_key}_{st.session_state.nav_token}"     # fresh key after a jump
+    event = st.dataframe(
+        df, key=key, on_select="rerun", selection_mode="single-row",
+        hide_index=True, use_container_width=True, column_config=column_config or {},
+    )
+    rows = event.selection.rows
+    return str(df.iloc[rows[0]]["Symbol"]) if rows else None
+
+
+# ---------------------------------------------------------------------------
+# SESSION STATE  +  apply any pending navigation BEFORE widgets are created
+# ---------------------------------------------------------------------------
+st.session_state.setdefault("ticker", "AAPL")
+st.session_state.setdefault("view", VIEWS[0])
+st.session_state.setdefault("nav_token", 0)
+
+if "_pending_ticker" in st.session_state:
+    st.session_state.ticker = st.session_state.pop("_pending_ticker")
+if "_pending_view" in st.session_state:
+    st.session_state.view = st.session_state.pop("_pending_view")
+
+
 # ---- sidebar: refresh + optional Anthropic API key -------------------------
 with st.sidebar:
     if st.button("🔄 Refresh data", use_container_width=True):
-        load.clear()                 # drop cached single-stock pulls
-        load_market_news.clear()     # drop cached market news
+        load.clear()
+        load_market_news.clear()
+        load_radar.clear()
         st.rerun()
     st.caption("Data is live from Yahoo Finance (quotes ~15 min delayed on the "
                "free feed). Auto-refreshes every 5 min; click above to force it.")
@@ -94,14 +139,15 @@ st.title("📈 Stock Research Bot")
 st.caption("Live news, earnings, price, and a transparent long/short lean. "
            "Research synthesis, **not** investment advice.")
 
-tab_research, tab_radar, tab_market = st.tabs(
-    ["🔍 Stock Research", "📡 Radar", "🌎 Market News"])
+# Navigation. key='view' ties the choice to session_state so code can change it.
+st.segmented_control("Go to", VIEWS, key="view", label_visibility="collapsed")
+view = st.session_state.get("view") or VIEWS[0]
 
 # ===========================================================================
-# TAB 1: single-stock research
+# VIEW 1: single-stock research
 # ===========================================================================
-with tab_research:
-    ticker = st.text_input("Ticker", value="AAPL", max_chars=8).strip().upper()
+if view == VIEWS[0]:
+    ticker = st.text_input("Ticker", key="ticker", max_chars=8).strip().upper()
 
     if ticker:
         try:
@@ -111,7 +157,6 @@ with tab_research:
             st.error(f"Couldn't load '{ticker}'. Is it a valid ticker? ({e})")
             st.stop()
 
-        # header: name + lean badge + data-as-of stamp
         st.subheader(f"{snap['name']} ({snap['ticker']})")
         if snap["sector"]:
             st.caption(f"{snap['sector']} · {snap.get('industry') or ''}")
@@ -127,7 +172,6 @@ with tab_research:
             unsafe_allow_html=True,
         )
 
-        # key numbers
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Price", f"${num(snap['price'])}")
         c2.metric("12-mo return", pct(snap["mom_12m"]))
@@ -135,7 +179,6 @@ with tab_research:
         c4.metric("ROE", pct(snap["roe"]))
         c5.metric("Market cap", num(snap["market_cap"], dollars=True))
 
-        # price chart with moving averages
         hist = snap["hist"]
         if hist is not None and not hist.empty:
             chart = pd.DataFrame({
@@ -145,10 +188,7 @@ with tab_research:
             })
             st.line_chart(chart, height=320)
 
-        # bull / bear case
-        # NOTE: Streamlit markdown treats `$` as the start of a LaTeX math block,
-        # so we escape every `$` to `\$` before displaying our reason strings.
-        def esc(text):
+        def esc(text):                       # escape `$` so Streamlit doesn't read LaTeX
             return text.replace("$", "\\$")
 
         left, right = st.columns(2)
@@ -165,7 +205,6 @@ with tab_research:
             if not bias["bear"]:
                 st.markdown("_No bearish signals fired._")
 
-        # recent news for this stock
         st.markdown("### 📰 Recent news")
         if snap["news"]:
             for n in snap["news"]:
@@ -173,7 +212,6 @@ with tab_research:
         else:
             st.caption("No recent news returned.")
 
-        # AI analyst thesis (on demand, only if a key is provided)
         st.markdown("### 🤖 AI analyst thesis")
         if not api_key:
             st.caption("Add an Anthropic API key in the sidebar to generate a written "
@@ -186,7 +224,6 @@ with tab_research:
             except Exception as e:
                 st.error(f"AI thesis failed: {e}")
 
-        # footer extras
         if snap["next_earnings"]:
             st.info(f"🗓️ Next earnings (estimated): **{snap['next_earnings']}**")
         if snap.get("summary"):
@@ -194,32 +231,13 @@ with tab_research:
                 st.write(snap["summary"])
 
 # ===========================================================================
-# TAB 2: Radar -- catalyst-driven idea discovery
+# VIEW 2: Radar -- catalyst-driven idea discovery (rows are clickable!)
 # ===========================================================================
-def show_movers(df, label):
-    """Render a movers table with market cap in $B and tidy columns."""
-    st.markdown(f"**{label}**")
-    if df is None or df.empty:
-        st.caption("None returned right now.")
-        return
-    d = df.copy()
-    if "Mkt Cap" in d:
-        d["Mkt Cap"] = (d["Mkt Cap"] / 1e9).round(2)   # -> billions
-    st.dataframe(
-        d, hide_index=True, use_container_width=True,
-        column_config={
-            "Price": st.column_config.NumberColumn(format="$%.2f"),
-            "% Change": st.column_config.NumberColumn(format="%.2f%%"),
-            "Mkt Cap": st.column_config.NumberColumn("Mkt Cap ($B)", format="%.1f"),
-        },
-    )
-
-
-with tab_radar:
+elif view == VIEWS[1]:
     st.markdown("### 📡 What's worth a look right now")
     st.caption("Stocks with a **catalyst** — a reason they're in play today. "
-               "A catalyst is a reason to *research*, not a reason to buy. "
-               "Spot something interesting? Type its ticker into the 🔍 Stock Research tab.")
+               "**Click any row** to load that ticker in Stock Research. "
+               "A catalyst is a reason to *research*, not a reason to buy.")
 
     try:
         with st.spinner("Scanning the market…"):
@@ -230,56 +248,68 @@ with tab_radar:
 
     if radar:
         st.caption(f"Data as of {radar['at']}")
+        picked = None      # first ticker clicked anywhere wins
 
         # --- earnings ---
         st.markdown("#### 📅 Reporting earnings in the next 7 days")
-        st.caption("Timing: BMO = before market open · AMC = after market close. "
-                   "Earnings = the biggest scheduled catalyst there is.")
-        e = radar["earnings"]
-        if e is not None and not e.empty:
-            ev = e.copy()
+        st.caption("Timing: BMO = before market open · AMC = after market close.")
+        ev = radar["earnings"]
+        if ev is not None and not ev.empty:
+            ev = ev.copy()
             if "Marketcap" in ev:
                 ev["Marketcap"] = (ev["Marketcap"] / 1e9).round(2)
-            st.dataframe(ev, hide_index=True, use_container_width=True,
-                         column_config={"Marketcap": st.column_config.NumberColumn(
-                             "Mkt Cap ($B)", format="%.1f")})
+            picked = selectable_table(ev, "earn", {
+                "Marketcap": st.column_config.NumberColumn("Mkt Cap ($B)", format="%.1f")
+            }) or picked
         else:
             st.caption("No upcoming earnings returned.")
 
         # --- recent surprises ---
         st.markdown("#### 🎯 Just reported — beats & misses")
         st.caption("Surprise(%) = how far reported EPS beat (+) or missed (–) estimates.")
-        s = radar["surprises"]
-        if s is not None and not s.empty:
-            st.dataframe(s, hide_index=True, use_container_width=True,
-                         column_config={"Surprise(%)": st.column_config.NumberColumn(
-                             format="%.1f%%")})
-        else:
-            st.caption("No recent reports returned.")
+        picked = selectable_table(radar["surprises"], "surp", {
+            "Surprise(%)": st.column_config.NumberColumn(format="%.1f%%")
+        }) or picked
 
         # --- movers ---
         st.markdown("#### 🔥 Today's movers")
+        mov_cfg = {
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "% Change": st.column_config.NumberColumn(format="%.2f%%"),
+            "Mkt Cap": st.column_config.NumberColumn("Mkt Cap ($B)", format="%.1f"),
+        }
+
+        def prep_movers(df):
+            if df is None or df.empty:
+                return df
+            d = df.copy()
+            if "Mkt Cap" in d:
+                d["Mkt Cap"] = (d["Mkt Cap"] / 1e9).round(2)
+            return d
+
         mleft, mright = st.columns(2)
         with mleft:
-            show_movers(radar["gainers"], "🟢 Top gainers")
+            st.markdown("**🟢 Top gainers**")
+            picked = selectable_table(prep_movers(radar["gainers"]), "gain", mov_cfg) or picked
         with mright:
-            show_movers(radar["losers"], "🔴 Top losers")
-        show_movers(radar["actives"], "🔁 Most active")
+            st.markdown("**🔴 Top losers**")
+            picked = selectable_table(prep_movers(radar["losers"]), "lose", mov_cfg) or picked
+        st.markdown("**🔁 Most active**")
+        picked = selectable_table(prep_movers(radar["actives"]), "act", mov_cfg) or picked
 
         # --- IPOs ---
         st.markdown("#### 🆕 IPOs (recent & upcoming)")
-        st.caption("Brand-new listings. Fund/ETF launches are filtered out to show real companies.")
-        ipo = radar["ipos"]
-        if ipo is not None and not ipo.empty:
-            st.dataframe(ipo, hide_index=True, use_container_width=True)
-        else:
-            st.caption("No company IPOs in the window right now.")
+        st.caption("Brand-new listings. Fund/ETF launches are filtered out.")
+        picked = selectable_table(radar["ipos"], "ipo") or picked
 
+        # If anything was clicked, jump to research with that ticker.
+        if picked:
+            go_to_research(picked)
 
 # ===========================================================================
-# TAB 3: general business / market news
+# VIEW 3: general business / market news
 # ===========================================================================
-with tab_market:
+elif view == VIEWS[2]:
     st.markdown("### 🌎 Today's business & market headlines")
     try:
         with st.spinner("Pulling market news…"):
@@ -289,7 +319,7 @@ with tab_market:
         if market_news:
             for n in market_news:
                 news_item(n)
-                st.markdown("")  # a little breathing room between stories
+                st.markdown("")
         else:
             st.caption("No market news returned right now — try Refresh.")
     except Exception as e:
