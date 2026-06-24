@@ -126,6 +126,33 @@ def _clean_news(t, limit=6):
     return out
 
 
+# Broad-market proxies we scrape headlines from for the general news feed.
+# (ETFs + indices carry the market-wide / business stories, not single-name noise.)
+MARKET_TICKERS = ["SPY", "QQQ", "DIA", "^GSPC", "^IXIC"]
+
+
+def get_market_news(limit: int = 25) -> list:
+    """Aggregate general business/market headlines across broad-market tickers.
+
+    Pulls news for each proxy, de-duplicates by title (the same story shows up
+    under several tickers), and sorts newest-first. ISO date strings sort
+    correctly as plain text, so we can sort on them directly.
+    """
+    seen, out = set(), []
+    for tk in MARKET_TICKERS:
+        try:
+            for n in _clean_news(yf.Ticker(tk), limit=15):
+                title = n.get("title")
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                out.append(n)
+        except Exception:
+            continue
+    out.sort(key=lambda n: n.get("date") or "", reverse=True)
+    return out[:limit]
+
+
 def _next_earnings(t):
     """Next earnings date if available (needs lxml). Optional -- never crash."""
     try:
