@@ -90,13 +90,64 @@ def get_snapshot(ticker: str, light: bool = False) -> dict:
         "earn_growth": info.get("earningsGrowth"),
         "market_cap": info.get("marketCap"),
 
+        # valuation & analyst views (the heart of the under/over-valued verdict)
+        "current_price": info.get("currentPrice"),
+        "forward_pe": info.get("forwardPE"),
+        "peg": info.get("trailingPegRatio") or info.get("pegRatio"),
+        "ev_ebitda": info.get("enterpriseToEbitda"),
+        "ev_rev": info.get("enterpriseToRevenue"),
+        "fcf": info.get("freeCashflow"),
+        "div_yield": info.get("dividendYield"),
+        "gross_margin": info.get("grossMargins"),
+        "target_mean": info.get("targetMeanPrice"),
+        "target_high": info.get("targetHighPrice"),
+        "target_low": info.get("targetLowPrice"),
+        "rec_mean": info.get("recommendationMean"),     # 1=strong buy ... 5=sell
+        "rec_key": info.get("recommendationKey"),
+        "n_analysts": info.get("numberOfAnalystOpinions"),
+
         # extras
         "hist": hist,
         "summary": None if light else info.get("longBusinessSummary"),
         "news": [] if light else _clean_news(t),
         "next_earnings": None if light else _next_earnings(t),
+        "earnings_history": [] if light else _earnings_history(t),
+        "rec_trend": None if light else _rec_trend(t),
     }
     return snap
+
+
+def _earnings_history(t, n=4):
+    """Last n reported quarters: did they beat or miss EPS estimates?"""
+    out = []
+    try:
+        ed = t.get_earnings_dates(limit=12)
+        past = ed[ed["Reported EPS"].notna()].head(n)
+        for date, row in past.iterrows():
+            out.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "estimate": row.get("EPS Estimate"),
+                "reported": row.get("Reported EPS"),
+                "surprise": row.get("Surprise(%)"),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def _rec_trend(t):
+    """Current analyst buy/hold/sell counts + % bullish."""
+    try:
+        rec = t.recommendations
+        row = rec[rec["period"] == "0m"].iloc[0]
+        counts = {k: int(row[k]) for k in
+                  ["strongBuy", "buy", "hold", "sell", "strongSell"]}
+        total = sum(counts.values())
+        bullish = counts["strongBuy"] + counts["buy"]
+        return {"counts": counts, "total": total,
+                "bullish_pct": bullish / total if total else None}
+    except Exception:
+        return None
 
 
 def _safe(fast_info, key):

@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 
 from analyst import get_snapshot, compute_bias, get_market_news, num, pct
+from valuation import value_verdict, overall_verdict
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from llm import write_thesis, DEFAULT_MODEL
@@ -35,9 +36,11 @@ VIEWS = ["🔍 Stock Research", "📡 Radar", "🌎 Market News"]
 @st.cache_data(ttl=300, show_spinner=False)
 def load(ticker: str):
     snap = get_snapshot(ticker)
-    bias = compute_bias(snap)
+    bias = compute_bias(snap)                 # momentum + quality scorecard
+    val = value_verdict(snap)                 # under/over-valued verdict
+    overall = overall_verdict(snap, bias, val)  # merged buy/hold/avoid stance
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return snap, bias, fetched_at
+    return snap, bias, val, overall, fetched_at
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -62,6 +65,9 @@ LEAN_COLORS = {
     "LONG": "#16a34a", "LEAN LONG": "#4ade80", "NEUTRAL": "#9ca3af",
     "LEAN SHORT": "#f87171", "SHORT": "#dc2626",
 }
+STANCE_COLORS = {"BUY LEAN": "#16a34a", "HOLD / NEUTRAL": "#9ca3af", "AVOID LEAN": "#dc2626"}
+VERDICT_COLORS = {"Undervalued": "#16a34a", "Fairly Valued": "#9ca3af", "Overvalued": "#dc2626"}
+CONF_COLORS = {"High": "#16a34a", "Medium": "#d97706", "Low": "#9ca3af"}
 
 
 def news_item(n):
@@ -152,32 +158,55 @@ if view == VIEWS[0]:
     if ticker:
         try:
             with st.spinner(f"Researching {ticker}…"):
-                snap, bias, fetched_at = load(ticker)
+                snap, bias, val, overall, fetched_at = load(ticker)
         except Exception as e:
             st.error(f"Couldn't load '{ticker}'. Is it a valid ticker? ({e})")
             st.stop()
+
+        # yfinance returns EMPTY data (not an error) for a bad symbol, which would
+        # render a hollow "Fairly Valued / HOLD" verdict. Catch that explicitly.
+        if not (snap.get("price") or snap.get("current_price")):
+            st.warning(f"Couldn't find market data for **{ticker}**. Double-check the "
+                       "symbol — use the ticker, not the company name "
+                       "(e.g. `TSLA` not `TESLA`, `GOOGL` not `GOOGLE`).")
+            st.stop()
+
+        def esc(text):                       # escape `$` so Streamlit doesn't read LaTeX
+            return text.replace("$", "\\$")
 
         st.subheader(f"{snap['name']} ({snap['ticker']})")
         if snap["sector"]:
             st.caption(f"{snap['sector']} · {snap.get('industry') or ''}")
 
-        color = LEAN_COLORS.get(bias["lean"], "#9ca3af")
+        # ---- THE HEADLINE VERDICT: stance + valuation + confidence ----
+        s_color = STANCE_COLORS.get(overall["stance"], "#9ca3af")
+        v_color = VERDICT_COLORS.get(val["verdict"], "#9ca3af")
+        c_color = CONF_COLORS.get(overall["confidence"], "#9ca3af")
         st.markdown(
-            f"<div style='display:inline-block;padding:6px 16px;border-radius:8px;"
-            f"background:{color};color:white;font-size:20px;font-weight:700;'>"
-            f"LEAN: {bias['lean']}</div>"
-            f"<span style='margin-left:12px;color:#888;'>"
-            f"bull {bias['bull_score']} vs bear {bias['bear_score']} · "
-            f"data as of {fetched_at}</span>",
+            f"<div style='display:flex;gap:10px;align-items:center;flex-wrap:wrap;'>"
+            f"<span style='padding:6px 16px;border-radius:8px;background:{s_color};"
+            f"color:white;font-size:20px;font-weight:700;'>{overall['stance']}</span>"
+            f"<span style='padding:6px 14px;border-radius:8px;background:{v_color};"
+            f"color:white;font-size:16px;font-weight:600;'>{val['verdict']}</span>"
+            f"<span style='padding:6px 12px;border-radius:8px;border:1px solid {c_color};"
+            f"color:{c_color};font-size:14px;font-weight:600;'>confidence: {overall['confidence']}</span>"
+            f"</div>"
+            f"<div style='margin-top:6px;color:#aaa;'>{esc(overall['summary'])} · "
+            f"data as of {fetched_at}</div>",
             unsafe_allow_html=True,
         )
+        st.caption("⚠️ Not financial advice — a structured synthesis of public data. "
+                   "The market already knows all of this; treat it as a second opinion.")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
+        # ---- key numbers (now valuation-led) ----
+        up = val["upside"]
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("Price", f"${num(snap['price'])}")
-        c2.metric("12-mo return", pct(snap["mom_12m"]))
-        c3.metric("P/E", num(snap["pe"]))
-        c4.metric("ROE", pct(snap["roe"]))
-        c5.metric("Market cap", num(snap["market_cap"], dollars=True))
+        c2.metric("Analyst target", f"${num(val['fair_value'])}" if val["fair_value"] else "--")
+        c3.metric("Implied upside", f"{up:+.0%}" if up is not None else "--")
+        c4.metric("P/E (fwd)", f"{num(snap['pe'])} ({num(snap['forward_pe'])})")
+        c5.metric("ROE", pct(snap["roe"]))
+        c6.metric("12-mo", pct(snap["mom_12m"]))
 
         hist = snap["hist"]
         if hist is not None and not hist.empty:
@@ -186,24 +215,70 @@ if view == VIEWS[0]:
                 "50-day avg": hist["Close"].rolling(50).mean(),
                 "200-day avg": hist["Close"].rolling(200).mean(),
             })
+            # show the analyst target as a reference line on the chart
+            if val["fair_value"]:
+                chart["Analyst target"] = val["fair_value"]
             st.line_chart(chart, height=320)
 
-        def esc(text):                       # escape `$` so Streamlit doesn't read LaTeX
-            return text.replace("$", "\\$")
+        # ---- VALUATION: why it's cheap or rich ----
+        st.markdown(f"### 💰 Valuation — **{val['verdict']}**")
+        if val["fair_value"] and snap.get("target_low") and snap.get("target_high"):
+            st.caption(f"Analyst fair-value range: \\${num(snap['target_low'])} (low) · "
+                       f"\\${num(val['fair_value'])} (mean) · \\${num(snap['target_high'])} (high) "
+                       f"across {snap.get('n_analysts') or '?'} analysts.")
+        vleft, vright = st.columns(2)
+        with vleft:
+            st.markdown("**🟢 Looks cheap because**")
+            for r in val["cheap"]:
+                st.markdown(f"- {esc(r)}")
+            if not val["cheap"]:
+                st.markdown("_No cheap signals._")
+        with vright:
+            st.markdown("**🔴 Looks rich because**")
+            for r in val["rich"]:
+                st.markdown(f"- {esc(r)}")
+            if not val["rich"]:
+                st.markdown("_No rich signals._")
 
+        # ---- analyst rating breakdown ----
+        rt = snap.get("rec_trend")
+        if rt and rt.get("total"):
+            c = rt["counts"]
+            st.caption(
+                f"**Analyst ratings:** {c['strongBuy']} strong-buy · {c['buy']} buy · "
+                f"{c['hold']} hold · {c['sell']} sell · {c['strongSell']} strong-sell "
+                f"({rt['bullish_pct']:.0%} bullish)")
+
+        # ---- TREND & QUALITY signals (the old momentum/quality scorecard) ----
+        st.markdown("### 📊 Trend & quality signals")
         left, right = st.columns(2)
         with left:
-            st.markdown("### 🟢 Bull case")
+            st.markdown("**🟢 Supporting**")
             for r in bias["bull"]:
                 st.markdown(f"- {esc(r)}")
             if not bias["bull"]:
-                st.markdown("_No bullish signals fired._")
+                st.markdown("_None fired._")
         with right:
-            st.markdown("### 🔴 Bear case")
+            st.markdown("**🔴 Against**")
             for r in bias["bear"]:
                 st.markdown(f"- {esc(r)}")
             if not bias["bear"]:
-                st.markdown("_No bearish signals fired._")
+                st.markdown("_None fired._")
+
+        # ---- earnings beat/miss track record ----
+        eh = snap.get("earnings_history")
+        if eh:
+            st.markdown("### 📈 Earnings track record")
+            beats = sum(1 for e in eh if (e.get("surprise") or 0) > 0)
+            st.caption(f"Beat estimates in {beats} of the last {len(eh)} reported quarters.")
+            edf = pd.DataFrame([{
+                "Quarter": e["date"],
+                "EPS est.": e["estimate"],
+                "Reported": e["reported"],
+                "Surprise %": e["surprise"],
+            } for e in eh])
+            st.dataframe(edf, hide_index=True, use_container_width=True,
+                         column_config={"Surprise %": st.column_config.NumberColumn(format="%.1f%%")})
 
         st.markdown("### 📰 Recent news")
         if snap["news"]:
