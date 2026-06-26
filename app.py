@@ -19,14 +19,15 @@ import pandas as pd
 import streamlit as st
 
 from analyst import get_snapshot, compute_bias, get_market_news, num, pct
-from valuation import value_verdict, overall_verdict
+from valuation import value_verdict, overall_verdict, build_board
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
+from watchlist import load_watchlist, save_watchlist, parse_tickers
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
-VIEWS = ["🔍 Stock Research", "📡 Radar", "🌎 Market News"]
+VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News"]
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,12 @@ def load(ticker: str):
 @st.cache_data(ttl=300, show_spinner=False)
 def load_market_news():
     return get_market_news(limit=25), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_board(tickers: tuple):
+    """Run the full verdict engine across a watchlist (tuple so it's cacheable)."""
+    return build_board(list(tickers)), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -95,10 +102,10 @@ def go_to_research(ticker: str):
     st.rerun()
 
 
-def selectable_table(df, base_key, column_config=None):
+def selectable_table(df, base_key, column_config=None, symbol_col="Symbol"):
     """Show a dataframe whose rows are clickable; return the clicked ticker."""
     if df is None or df.empty:
-        st.caption("None returned right now.")
+        st.caption("None right now.")
         return None
     key = f"{base_key}_{st.session_state.nav_token}"     # fresh key after a jump
     event = st.dataframe(
@@ -106,7 +113,7 @@ def selectable_table(df, base_key, column_config=None):
         hide_index=True, use_container_width=True, column_config=column_config or {},
     )
     rows = event.selection.rows
-    return str(df.iloc[rows[0]]["Symbol"]) if rows else None
+    return str(df.iloc[rows[0]][symbol_col]) if rows else None
 
 
 # ---------------------------------------------------------------------------
@@ -306,9 +313,72 @@ if view == VIEWS[0]:
                 st.write(snap["summary"])
 
 # ===========================================================================
-# VIEW 2: Radar -- catalyst-driven idea discovery (rows are clickable!)
+# VIEW 2: Watchlist -- your stocks, each with a buy/hold/avoid verdict
 # ===========================================================================
 elif view == VIEWS[1]:
+    st.markdown("### 📋 Watchlist — buy / watch / avoid")
+    st.caption("Your stocks, each run through the full valuation + trend engine. "
+               "**Click any row** to open it in Stock Research. Not financial advice.")
+
+    wl = load_watchlist()
+    with st.expander("✏️ Edit your watchlist"):
+        text = st.text_area("Tickers (comma or space separated)",
+                            value=", ".join(wl), key="wl_text", height=80)
+        if st.button("💾 Save & run", type="primary"):
+            save_watchlist(parse_tickers(text))
+            load_board.clear()
+            st.rerun()
+
+    tickers = parse_tickers(st.session_state.get("wl_text") or ", ".join(wl))
+    board = []
+    try:
+        with st.spinner(f"Scoring {len(tickers)} stocks…"):
+            board, board_at = load_board(tuple(tickers))
+    except Exception as e:
+        st.error(f"Couldn't build the board: {e}")
+
+    if board:
+        df = pd.DataFrame(board)
+        st.caption(f"{len(df)} stocks scored · data as of {board_at}")
+        cfg = {
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Upside %": st.column_config.NumberColumn(format="%+.1f%%"),
+        }
+        cols = ["Ticker", "Name", "Price", "Stance", "Valuation",
+                "Upside %", "Trend", "Confidence"]
+
+        buys = df[df["Stance"] == "BUY LEAN"].sort_values("_score", ascending=False)
+        watch = df[(df["Stance"] == "HOLD / NEUTRAL") &
+                   ((df["Valuation"] == "Undervalued") | (df["Upside %"] > 10))
+                   ].sort_values("Upside %", ascending=False)
+        avoid = df[df["Stance"] == "AVOID LEAN"].sort_values("_score")
+        shown = set(buys["Ticker"]) | set(watch["Ticker"]) | set(avoid["Ticker"])
+        rest = df[~df["Ticker"].isin(shown)].sort_values("_score", ascending=False)
+
+        picked = None
+        st.markdown(f"#### 🟢 Buy leans ({len(buys)})")
+        st.caption("Cheap-enough **and** the trend is working — the strongest setups.")
+        picked = selectable_table(buys[cols], "wl_buy", cfg, "Ticker") or picked
+
+        st.markdown(f"#### 👀 Watch closely ({len(watch)})")
+        st.caption("Undervalued / has upside, but the trend hasn't confirmed yet — "
+                   "keep an eye on these to buy.")
+        picked = selectable_table(watch[cols], "wl_watch", cfg, "Ticker") or picked
+
+        st.markdown(f"#### ⚪ The rest ({len(rest)})")
+        picked = selectable_table(rest[cols], "wl_rest", cfg, "Ticker") or picked
+
+        st.markdown(f"#### 🔴 Avoid ({len(avoid)})")
+        st.caption("Overvalued and/or the trend is against you.")
+        picked = selectable_table(avoid[cols], "wl_avoid", cfg, "Ticker") or picked
+
+        if picked:
+            go_to_research(picked)
+
+# ===========================================================================
+# VIEW 3: Radar -- catalyst-driven idea discovery (rows are clickable!)
+# ===========================================================================
+elif view == VIEWS[2]:
     st.markdown("### 📡 What's worth a look right now")
     st.caption("Stocks with a **catalyst** — a reason they're in play today. "
                "**Click any row** to load that ticker in Stock Research. "
@@ -382,9 +452,9 @@ elif view == VIEWS[1]:
             go_to_research(picked)
 
 # ===========================================================================
-# VIEW 3: general business / market news
+# VIEW 4: general business / market news
 # ===========================================================================
-elif view == VIEWS[2]:
+elif view == VIEWS[3]:
     st.markdown("### 🌎 Today's business & market headlines")
     try:
         with st.spinner("Pulling market news…"):

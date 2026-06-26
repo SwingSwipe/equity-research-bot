@@ -160,6 +160,41 @@ def overall_verdict(snap: dict, bias: dict, val: dict) -> dict:
             "confidence": confidence, "combined": combined}
 
 
+def build_board(tickers) -> list:
+    """Run the FULL engine (valuation + trend + overall stance) across a list of
+    tickers and return one row per name -- for the Watchlist board.
+
+    Uses light snapshots (no news/earnings-history) because those aren't needed
+    for the verdict, which keeps a 20-name board fast. One bad ticker is skipped,
+    never crashes the board.
+    """
+    from analyst import get_snapshot, compute_bias
+
+    rows = []
+    for tk in tickers:
+        try:
+            snap = get_snapshot(tk, light=True)
+            if not (snap.get("price") or snap.get("current_price")):
+                continue                       # invalid/empty ticker -> skip
+            bias = compute_bias(snap)
+            val = value_verdict(snap)
+            ov = overall_verdict(snap, bias, val)
+            rows.append({
+                "Ticker": tk,
+                "Name": snap.get("name"),
+                "Price": snap.get("price") or snap.get("current_price"),
+                "Stance": ov["stance"],
+                "Valuation": val["verdict"],
+                "Upside %": round(val["upside"] * 100, 1) if val["upside"] is not None else None,
+                "Trend": bias["lean"],
+                "Confidence": ov["confidence"],
+                "_score": ov["combined"],
+            })
+        except Exception:
+            continue
+    return rows
+
+
 if __name__ == "__main__":
     import sys
     from analyst import get_snapshot, compute_bias
