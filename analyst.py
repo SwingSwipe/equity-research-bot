@@ -113,8 +113,38 @@ def get_snapshot(ticker: str, light: bool = False) -> dict:
         "next_earnings": None if light else _next_earnings(t),
         "earnings_history": [] if light else _earnings_history(t),
         "rec_trend": None if light else _rec_trend(t),
+        "financials": {} if light else _financials(t),
     }
     return snap
+
+
+def _financials(t, years=4):
+    """Last few years of the income statement: revenue, net income, etc.
+    yfinance returns these as a DataFrame (rows = line items, cols = year-ends).
+    We pull the rows we care about, newest period first."""
+    out = {}
+    try:
+        fin = t.income_stmt
+        if fin is None or fin.empty:
+            return out
+        cols = list(fin.columns)[:years]
+
+        def row(name):
+            if name in fin.index:
+                return [float(fin.loc[name, c]) if fin.loc[name, c] == fin.loc[name, c]
+                        else None for c in cols]
+            return [None] * len(cols)
+
+        out = {
+            "years": [str(c)[:4] for c in cols],
+            "revenue": row("Total Revenue"),
+            "net_income": row("Net Income"),
+            "gross_profit": row("Gross Profit"),
+            "operating_income": row("Operating Income"),
+        }
+    except Exception:
+        pass
+    return out
 
 
 def _earnings_history(t, n=4):

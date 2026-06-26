@@ -19,7 +19,7 @@ import pandas as pd
 import streamlit as st
 
 from analyst import get_snapshot, compute_bias, get_market_news, num, pct
-from valuation import value_verdict, overall_verdict, build_board
+from valuation import value_verdict, overall_verdict, build_board, why_summary
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from watchlist import load_watchlist, save_watchlist, parse_tickers
@@ -205,6 +205,9 @@ if view == VIEWS[0]:
         st.caption("⚠️ Not financial advice — a structured synthesis of public data. "
                    "The market already knows all of this; treat it as a second opinion.")
 
+        # ---- THE BOTTOM LINE: a plain-English summary of the whole verdict ----
+        st.markdown(f"> {esc(why_summary(snap, bias, val, overall))}")
+
         # ---- key numbers (now valuation-led) ----
         up = val["upside"]
         c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -255,6 +258,65 @@ if view == VIEWS[0]:
                 f"**Analyst ratings:** {c['strongBuy']} strong-buy · {c['buy']} buy · "
                 f"{c['hold']} hold · {c['sell']} sell · {c['strongSell']} strong-sell "
                 f"({rt['bullish_pct']:.0%} bullish)")
+
+        # ---- KEY RATIOS (one consolidated reference grid) ----
+        st.markdown("### 📐 Key ratios")
+        fcf_yield = (snap["fcf"] / snap["market_cap"]) if (snap.get("fcf") and snap.get("market_cap")) else None
+        dy = snap.get("div_yield")
+        dy_str = f"{dy:.2f}%" if isinstance(dy, (int, float)) else "--"   # already in %
+        rc1, rc2, rc3 = st.columns(3)
+        with rc1:
+            st.markdown(
+                "**Valuation**\n"
+                f"- P/E trailing: {num(snap['pe'])}\n"
+                f"- P/E forward: {num(snap['forward_pe'])}\n"
+                f"- PEG: {num(snap['peg'])}\n"
+                f"- P/B: {num(snap['pb'])}\n"
+                f"- P/S: {num(snap['ps'])}\n"
+                f"- EV/EBITDA: {num(snap['ev_ebitda'])}\n"
+                f"- FCF yield: {pct(fcf_yield)}\n"
+                f"- Dividend yield: {dy_str}")
+        with rc2:
+            st.markdown(
+                "**Quality**\n"
+                f"- ROE: {pct(snap['roe'])}\n"
+                f"- Gross margin: {pct(snap['gross_margin'])}\n"
+                f"- Net margin: {pct(snap['margin'])}\n"
+                f"- Debt/Equity: {num(snap['de'])}")
+        with rc3:
+            st.markdown(
+                "**Growth**\n"
+                f"- Revenue growth: {pct(snap['rev_growth'])}\n"
+                f"- Earnings growth: {pct(snap['earn_growth'])}")
+
+        # ---- FINANCIALS (revenue & net-income trend) ----
+        fin = snap.get("financials")
+        if fin and fin.get("years"):
+            st.markdown("### 📑 Financials (annual)")
+            yrs = fin["years"]
+            order = list(reversed(range(len(yrs))))        # oldest -> newest (L→R)
+
+            def billions(key, i):
+                v = fin[key][i]
+                return round(v / 1e9, 1) if isinstance(v, (int, float)) else None
+
+            fdf = pd.DataFrame(
+                {"Revenue ($B)": [billions("revenue", i) for i in order],
+                 "Net income ($B)": [billions("net_income", i) for i in order]},
+                index=[yrs[i] for i in order])
+            st.bar_chart(fdf, height=260)
+
+            margins = []
+            for i in order:
+                rev, ni = fin["revenue"][i], fin["net_income"][i]
+                margins.append(f"{ni / rev * 100:.1f}%" if (rev and ni) else "--")
+            tbl = pd.DataFrame({
+                "Year": [yrs[i] for i in order],
+                "Revenue ($B)": [billions("revenue", i) for i in order],
+                "Net income ($B)": [billions("net_income", i) for i in order],
+                "Net margin": margins,
+            })
+            st.dataframe(tbl, hide_index=True, use_container_width=True)
 
         # ---- TREND & QUALITY signals (the old momentum/quality scorecard) ----
         st.markdown("### 📊 Trend & quality signals")

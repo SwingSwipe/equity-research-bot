@@ -160,6 +160,69 @@ def overall_verdict(snap: dict, bias: dict, val: dict) -> dict:
             "confidence": confidence, "combined": combined}
 
 
+def _explain(reason: str) -> str:
+    """Pull the plain-English half out of a reason string (the bit after the dash)."""
+    for sep in [" — ", " -> ", " – "]:
+        if sep in reason:
+            return reason.split(sep)[-1].strip().rstrip(".")
+    return reason.rstrip(".")
+
+
+def _join(reasons) -> str:
+    """Join a few explanations into readable prose."""
+    parts = [_explain(r) for r in reasons]
+    parts = [(p[0].lower() + p[1:]) if p else p for p in parts]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return " and ".join([", ".join(parts[:-1]), parts[-1]]) if len(parts) > 2 else " and ".join(parts)
+
+
+def why_summary(snap: dict, bias: dict, val: dict, overall: dict) -> str:
+    """A plain-English paragraph explaining the verdict -- the 'bottom line'."""
+    name = snap.get("name") or snap.get("ticker")
+    s = [f"**{name}** screens as **{val['verdict']}** with an overall "
+         f"**{overall['stance']}** ({overall['confidence'].lower()} confidence)."]
+
+    up, fv = val.get("upside"), val.get("fair_value")
+    if up is not None and fv:
+        direction = "upside to" if up > 0 else "downside to"
+        tail = f" across {snap['n_analysts']} analysts." if snap.get("n_analysts") else "."
+        s.append(f"Wall Street's consensus points to {up:+.0%} {direction} a "
+                 f"${fv:,.0f} price target{tail}")
+
+    if val["verdict"] == "Undervalued" and val["cheap"]:
+        s.append(f"It looks cheap because {_join(val['cheap'][:3])}.")
+    elif val["verdict"] == "Overvalued" and val["rich"]:
+        s.append(f"It looks expensive because {_join(val['rich'][:3])}.")
+    else:
+        if val["cheap"]:
+            s.append(f"In its favor: {_join(val['cheap'][:2])}.")
+        if val["rich"]:
+            s.append(f"Against it: {_join(val['rich'][:2])}.")
+
+    trend = {
+        "LONG": "The price trend is firmly up (above its 50- and 200-day averages).",
+        "LEAN LONG": "The price trend leans up.",
+        "NEUTRAL": "The price trend is mixed.",
+        "LEAN SHORT": "The price trend leans down.",
+        "SHORT": "The price trend is down (below its key moving averages).",
+    }.get(bias["lean"], "")
+    if trend:
+        s.append(trend)
+
+    if "conflict" in overall["summary"]:
+        s.append("⚠️ Valuation and trend disagree — classic value-trap territory; "
+                 "patient investors often wait for the trend to turn before buying a cheap-but-falling name.")
+    elif overall["stance"] == "BUY LEAN":
+        s.append("Net: cheap-enough and working — the kind of setup worth a closer look (still not advice).")
+    elif overall["stance"] == "AVOID LEAN":
+        s.append("Net: expensive and/or weak — little here to like right now.")
+
+    return " ".join(s)
+
+
 def build_board(tickers) -> list:
     """Run the FULL engine (valuation + trend + overall stance) across a list of
     tickers and return one row per name -- for the Watchlist board.
