@@ -259,6 +259,11 @@ if view == VIEWS[0]:
             st.caption(f"Analyst fair-value range: \\${num(snap['target_low'])} (low) · "
                        f"\\${num(val['fair_value'])} (mean) · \\${num(snap['target_high'])} (high) "
                        f"across {snap.get('n_analysts') or '?'} analysts.")
+        if val.get("sector_pe"):
+            ev_bit = f" · EV/EBITDA {val['sector_ev']:.0f}" if val.get("sector_ev") else ""
+            st.caption(f"📊 Judged vs **{val['sector']}** sector medians — P/E "
+                       f"{val['sector_pe']:.0f}{ev_bit}. This stock: P/E {num(snap['pe'])}, "
+                       f"EV/EBITDA {num(snap['ev_ebitda'])}.")
         vleft, vright = st.columns(2)
         with vleft:
             st.markdown("**🟢 Looks cheap because**")

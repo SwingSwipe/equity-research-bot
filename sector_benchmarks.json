@@ -1,0 +1,93 @@
+{
+  "Industrials": {
+    "_n": 10,
+    "pe": 36.479,
+    "pb": 7.871,
+    "ps": 2.859,
+    "ev_ebitda": 23.634,
+    "fcf_yield": 0.026
+  },
+  "Healthcare": {
+    "_n": 12,
+    "pe": 26.419,
+    "pb": 3.076,
+    "ps": 3.13,
+    "ev_ebitda": 13.831,
+    "fcf_yield": 0.046
+  },
+  "Technology": {
+    "_n": 15,
+    "pe": 47.457,
+    "pb": 13.467,
+    "ps": 7.843,
+    "ev_ebitda": 26.612,
+    "fcf_yield": 0.023
+  },
+  "Utilities": {
+    "_n": 6,
+    "pe": 20.999,
+    "pb": 2.34,
+    "ps": 4.082,
+    "ev_ebitda": 14.16
+  },
+  "Financial Services": {
+    "_n": 18,
+    "pe": 17.699,
+    "pb": 2.28,
+    "ps": 3.359,
+    "ev_ebitda": 11.227,
+    "fcf_yield": 0.078
+  },
+  "Basic Materials": {
+    "_n": 2,
+    "pe": 29.497,
+    "pb": 3.083,
+    "ps": 4.014,
+    "ev_ebitda": 20.003,
+    "fcf_yield": 0.043
+  },
+  "Consumer Cyclical": {
+    "_n": 12,
+    "pe": 27.017,
+    "pb": 5.37,
+    "ps": 1.618,
+    "ev_ebitda": 12.559,
+    "fcf_yield": 0.025
+  },
+  "Real Estate": {
+    "_n": 5,
+    "pe": 29.493,
+    "pb": 2.25,
+    "ps": 7.102,
+    "ev_ebitda": 18.421,
+    "fcf_yield": 0.061
+  },
+  "Communication Services": {
+    "_n": 4,
+    "pe": 26.169,
+    "pb": 8.679,
+    "ps": 9.905,
+    "ev_ebitda": 25.566,
+    "fcf_yield": 0.014
+  },
+  "Consumer Defensive": {
+    "_n": 4,
+    "pe": 23.723,
+    "pb": 1.618,
+    "ps": 1.846,
+    "ev_ebitda": 14.761,
+    "fcf_yield": 0.058
+  },
+  "Energy": {
+    "_n": 2,
+    "pe": 12.991,
+    "pb": 2.377,
+    "ps": 1.718,
+    "ev_ebitda": 7.532,
+    "fcf_yield": 0.099
+  },
+  "_meta": {
+    "built": "2026-06-25",
+    "sample": 90
+  }
+}

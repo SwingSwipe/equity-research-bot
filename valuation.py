@@ -35,8 +35,18 @@ def _num(x, dec=0):
     return f"{x:,.{dec}f}" if isinstance(x, (int, float)) else "--"
 
 
-def value_verdict(snap: dict) -> dict:
-    """Return the valuation verdict dict for one stock's snapshot."""
+def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
+    """Return the valuation verdict dict for one stock's snapshot.
+
+    If sector benchmarks are available, P/E and EV/EBITDA are judged RELATIVE to
+    the stock's sector median (cheap/expensive *for its sector*) instead of by
+    one-size-fits-all thresholds -- a big accuracy win across sectors."""
+    if benchmarks is None:
+        from benchmarks import load_benchmarks
+        benchmarks = load_benchmarks()
+    sec = snap.get("sector")
+    secbm = benchmarks.get(sec, {}) if sec else {}
+
     price = snap.get("price") or snap.get("current_price")
     cheap, rich = [], []          # (reason, weight)
     score = 0
@@ -87,10 +97,29 @@ def value_verdict(snap: dict) -> dict:
         elif 0 < fy < 0.02:
             rich.append((f"Free-cash-flow yield only {fy:.1%} — you pay a lot per dollar of cash.", 1)); score -= 1
 
-    # --- 6. EV/EBITDA (rough, sector-dependent) ---
-    ee = snap.get("ev_ebitda")
+    # --- 6. P/E vs SECTOR (only when we have a sector median) ---
+    pe, pe_med = snap.get("pe"), secbm.get("pe")
+    if isinstance(pe, (int, float)) and pe > 0 and pe_med:
+        ratio = pe / pe_med
+        if ratio < 0.8:
+            cheap.append((f"P/E {pe:.1f} is below the {sec} sector median of "
+                          f"{pe_med:.0f} — cheap for its sector.", 1)); score += 1
+        elif ratio > 1.3:
+            rich.append((f"P/E {pe:.1f} is above the {sec} sector median of "
+                         f"{pe_med:.0f} — expensive for its sector.", 1)); score -= 1
+
+    # --- 7. EV/EBITDA: sector-relative when possible, else absolute ---
+    ee, ee_med = snap.get("ev_ebitda"), secbm.get("ev_ebitda")
     if isinstance(ee, (int, float)) and ee > 0:
-        if ee < 10:
+        if ee_med:
+            ratio = ee / ee_med
+            if ratio < 0.8:
+                cheap.append((f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
+                              "— cheap on cash earnings for its sector.", 1)); score += 1
+            elif ratio > 1.3:
+                rich.append((f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
+                             "— rich for its sector.", 1)); score -= 1
+        elif ee < 10:
             cheap.append((f"EV/EBITDA {ee:.1f} (<10) — inexpensive on cash earnings.", 1)); score += 1
         elif ee > 20:
             rich.append((f"EV/EBITDA {ee:.1f} (>20) — richly valued on cash earnings.", 1)); score -= 1
@@ -119,6 +148,7 @@ def value_verdict(snap: dict) -> dict:
         "fair_value": tm, "upside": upside,
         "cheap": [r for r, _ in cheap], "rich": [r for r, _ in rich],
         "n_signals": n_signals,
+        "sector": sec, "sector_pe": secbm.get("pe"), "sector_ev": secbm.get("ev_ebitda"),
     }
 
 
