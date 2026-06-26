@@ -24,12 +24,13 @@ from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from watchlist import load_watchlist, save_watchlist, parse_tickers
 from tracker import log_verdicts, score_log
+from portfolio import build_portfolio, value_portfolio, load_portfolio
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
 VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar",
-         "🌎 Market News", "📈 Track Record"]
+         "🌎 Market News", "📈 Track Record", "💼 Portfolio"]
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,11 @@ def load_board(tickers: tuple):
 @st.cache_data(ttl=600, show_spinner=False)
 def score_tracker():
     return score_log()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def value_paper_portfolio():
+    return value_portfolio()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -642,6 +648,63 @@ elif view == VIEWS[4]:
                 "return_%": st.column_config.NumberColumn("Return", format="%+.1f%%"),
                 "vs_SPY_%": st.column_config.NumberColumn("vs SPY", format="%+.1f%%"),
             })
+
+# ===========================================================================
+# VIEW 6: Paper portfolio -- $1,000 picked by the bot, tracked vs the S&P 500
+# ===========================================================================
+elif view == VIEWS[5]:
+    st.markdown("### 💼 Paper portfolio — $1,000, picked by the bot")
+    st.caption("Equal-weighted across the bot's top **BUY LEAN** names, tracked vs the "
+               "S&P 500. Paper money, real prices — a test of the bot's *process*, "
+               "not investment advice.")
+
+    port = load_portfolio()
+    if not port:
+        st.info("No paper portfolio yet.")
+        if st.button("📈 Build $1,000 portfolio from my watchlist", type="primary"):
+            with st.spinner("Picking the bot's BUY LEANs and allocating…"):
+                build_portfolio(load_watchlist())
+            value_paper_portfolio.clear()
+            st.rerun()
+    else:
+        try:
+            v = value_paper_portfolio()
+        except Exception as e:
+            v = None
+            st.error(f"Couldn't value the portfolio: {e}")
+
+        if v:
+            created = v.get("created")
+            days = (datetime.today() - datetime.strptime(created, "%Y-%m-%d")).days if created else 0
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Portfolio value", f"${v['total_value']:,.2f}",
+                      f"{v['total_return_pct']:+.2f}%")
+            c3.metric("S&P 500 (same window)",
+                      f"{v['spy_return_pct']:+.2f}%" if v['spy_return_pct'] is not None else "--")
+            c2.metric("Beating the market by",
+                      f"{v['excess_pct']:+.2f}%" if v['excess_pct'] is not None else "--")
+            c4.metric("Held since", f"{created}", f"{days} days")
+
+            if days < 14:
+                st.warning("⏳ Brand new — a few days of returns are pure noise. The point "
+                           "is to let it run for weeks and see if it beats just buying SPY.")
+
+            st.dataframe(
+                v["detail"], hide_index=True, use_container_width=True, column_config={
+                    "Entry": st.column_config.NumberColumn(format="$%.2f"),
+                    "Now": st.column_config.NumberColumn(format="$%.2f"),
+                    "Value": st.column_config.NumberColumn(format="$%.2f"),
+                    "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
+                    "P&L $": st.column_config.NumberColumn(format="$%+.2f"),
+                })
+
+        with st.expander("🔄 Rebuild from scratch (resets entry prices & date)"):
+            st.caption("Only do this to start a fresh run — it wipes the current track record.")
+            if st.button("Rebuild now"):
+                with st.spinner("Rebuilding…"):
+                    build_portfolio(load_watchlist())
+                value_paper_portfolio.clear()
+                st.rerun()
 
 # ---- shared footer ---------------------------------------------------------
 st.divider()
