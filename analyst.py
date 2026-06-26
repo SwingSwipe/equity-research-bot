@@ -291,13 +291,9 @@ def compute_bias(s: dict) -> dict:
         elif p <= s["year_low"] * 1.05:
             bear.append(("Sitting near its 52-week low -> persistent weakness.", 1))
 
-    # --- VALUATION (a CONTRARIAN check -- cheap supports long, rich cautions) ---
-    if isinstance(s["pe"], (int, float)):
-        if 0 < s["pe"] < 15:
-            bull.append((f"P/E of {num(s['pe'])} is low -> cheap on earnings.", 1))
-        elif s["pe"] > 40:
-            bear.append((f"P/E of {num(s['pe'])} is rich -> priced for a lot of "
-                         "growth; little margin for error.", 1))
+    # NOTE: valuation (P/E etc.) is intentionally NOT scored here -- it's owned
+    # entirely by value_verdict() in valuation.py. Scoring it in both places
+    # would double-count the same idea. This function stays trend + quality only.
 
     # --- QUALITY: return on equity ---
     if isinstance(s["roe"], (int, float)):

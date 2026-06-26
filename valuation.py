@@ -48,81 +48,95 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
     secbm = benchmarks.get(sec, {}) if sec else {}
 
     price = snap.get("price") or snap.get("current_price")
-    cheap, rich = [], []          # (reason, weight)
-    score = 0
 
-    # --- 1. ANALYST PRICE TARGET (the headline fair-value anchor) ---
+    # Each signal votes into a THEME as (reason, signed_strength). Correlated
+    # signals share a theme, and each theme's total is CAPPED -- so four
+    # different 'cheap on multiples' signals can't masquerade as +4 of
+    # independent conviction when they're really one idea.
+    votes = {"analyst": [], "multiples": [], "cash": []}
+    CAPS = {"analyst": 3, "multiples": 2, "cash": 1}
+
+    def add(theme, reason, signed):
+        votes[theme].append((reason, signed))
+
+    # --- ANALYST theme: price target + consensus rating ('what the Street thinks') ---
     tm = snap.get("target_mean")
     upside = (tm / price - 1) if (tm and price) else None
     if upside is not None:
         if upside > 0.15:
-            cheap.append((f"Analyst mean target ${_num(tm)} is {upside:+.0%} above "
-                          f"the ${_num(price,2)} price — Street sees upside.", 2)); score += 2
+            add("analyst", f"Analyst mean target ${_num(tm)} is {upside:+.0%} above the "
+                f"${_num(price,2)} price — Street sees upside.", 2)
         elif upside < -0.05:
-            rich.append((f"Price ${_num(price,2)} is above the ${_num(tm)} analyst "
-                         f"target ({upside:+.0%}) — Street sees downside.", 2)); score -= 2
-
-    # --- 2. ANALYST RATING ---
+            add("analyst", f"Price ${_num(price,2)} is above the ${_num(tm)} analyst "
+                f"target ({upside:+.0%}) — Street sees downside.", -2)
     rm = snap.get("rec_mean")     # 1=strong buy ... 5=sell
     if isinstance(rm, (int, float)) and rm > 0:
         if rm <= 2.2:
-            cheap.append((f"Consensus rating {rm:.1f}/5 ({snap.get('rec_key')}) "
-                          f"across {snap.get('n_analysts') or '?'} analysts — bullish.", 1)); score += 1
+            add("analyst", f"Consensus rating {rm:.1f}/5 ({snap.get('rec_key')}) across "
+                f"{snap.get('n_analysts') or '?'} analysts — bullish.", 1)
         elif rm >= 3.0:
-            rich.append((f"Consensus rating {rm:.1f}/5 — analysts are cautious.", 1)); score -= 1
+            add("analyst", f"Consensus rating {rm:.1f}/5 — analysts are cautious.", -1)
 
-    # --- 3. PEG (value adjusted for growth) ---
+    # --- MULTIPLES theme: PEG, fwd-vs-trailing, P/E-vs-sector, EV/EBITDA
+    #     (all the same underlying idea: 'cheap on fundamentals' -> capped) ---
     peg = snap.get("peg")
     if isinstance(peg, (int, float)) and peg > 0:
         if peg < 1.0:
-            cheap.append((f"PEG {peg:.2f} (<1) — cheap relative to its growth.", 1)); score += 1
+            add("multiples", f"PEG {peg:.2f} (<1) — cheap relative to its growth.", 1)
         elif peg > 2.0:
-            rich.append((f"PEG {peg:.2f} (>2) — expensive relative to its growth.", 1)); score -= 1
-
-    # --- 4. FORWARD vs TRAILING P/E ---
+            add("multiples", f"PEG {peg:.2f} (>2) — expensive relative to its growth.", -1)
     fpe, tpe = snap.get("forward_pe"), snap.get("pe")
     if all(isinstance(x, (int, float)) and x > 0 for x in [fpe, tpe]):
         if fpe < tpe * 0.9:
-            cheap.append((f"Forward P/E {fpe:.1f} below trailing {tpe:.1f} — earnings "
-                          "expected to grow into the valuation.", 1)); score += 1
+            add("multiples", f"Forward P/E {fpe:.1f} below trailing {tpe:.1f} — earnings "
+                "expected to grow into the valuation.", 1)
         elif fpe > tpe * 1.1:
-            rich.append((f"Forward P/E {fpe:.1f} above trailing {tpe:.1f} — earnings "
-                         "expected to shrink.", 1)); score -= 1
-
-    # --- 5. FREE-CASH-FLOW YIELD ---
-    fy = _fcf_yield(snap)
-    if fy is not None:
-        if fy > 0.05:
-            cheap.append((f"Free-cash-flow yield {fy:.1%} — strong cash return for the price.", 1)); score += 1
-        elif 0 < fy < 0.02:
-            rich.append((f"Free-cash-flow yield only {fy:.1%} — you pay a lot per dollar of cash.", 1)); score -= 1
-
-    # --- 6. P/E vs SECTOR (only when we have a sector median) ---
+            add("multiples", f"Forward P/E {fpe:.1f} above trailing {tpe:.1f} — earnings "
+                "expected to shrink.", -1)
     pe, pe_med = snap.get("pe"), secbm.get("pe")
     if isinstance(pe, (int, float)) and pe > 0 and pe_med:
         ratio = pe / pe_med
         if ratio < 0.8:
-            cheap.append((f"P/E {pe:.1f} is below the {sec} sector median of "
-                          f"{pe_med:.0f} — cheap for its sector.", 1)); score += 1
+            add("multiples", f"P/E {pe:.1f} is below the {sec} sector median of "
+                f"{pe_med:.0f} — cheap for its sector.", 1)
         elif ratio > 1.3:
-            rich.append((f"P/E {pe:.1f} is above the {sec} sector median of "
-                         f"{pe_med:.0f} — expensive for its sector.", 1)); score -= 1
-
-    # --- 7. EV/EBITDA: sector-relative when possible, else absolute ---
+            add("multiples", f"P/E {pe:.1f} is above the {sec} sector median of "
+                f"{pe_med:.0f} — expensive for its sector.", -1)
     ee, ee_med = snap.get("ev_ebitda"), secbm.get("ev_ebitda")
     if isinstance(ee, (int, float)) and ee > 0:
         if ee_med:
             ratio = ee / ee_med
             if ratio < 0.8:
-                cheap.append((f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
-                              "— cheap on cash earnings for its sector.", 1)); score += 1
+                add("multiples", f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
+                    "— cheap on cash earnings for its sector.", 1)
             elif ratio > 1.3:
-                rich.append((f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
-                             "— rich for its sector.", 1)); score -= 1
+                add("multiples", f"EV/EBITDA {ee:.1f} vs the {sec} median {ee_med:.0f} "
+                    "— rich for its sector.", -1)
         elif ee < 10:
-            cheap.append((f"EV/EBITDA {ee:.1f} (<10) — inexpensive on cash earnings.", 1)); score += 1
+            add("multiples", f"EV/EBITDA {ee:.1f} (<10) — inexpensive on cash earnings.", 1)
         elif ee > 20:
-            rich.append((f"EV/EBITDA {ee:.1f} (>20) — richly valued on cash earnings.", 1)); score -= 1
+            add("multiples", f"EV/EBITDA {ee:.1f} (>20) — richly valued on cash earnings.", -1)
+
+    # --- CASH theme: free-cash-flow yield ---
+    fy = _fcf_yield(snap)
+    if fy is not None:
+        if fy > 0.05:
+            add("cash", f"Free-cash-flow yield {fy:.1%} — strong cash return for the price.", 1)
+        elif 0 < fy < 0.02:
+            add("cash", f"Free-cash-flow yield only {fy:.1%} — you pay a lot per dollar of cash.", -1)
+
+    # --- combine: cap each theme, then sum (de-correlation happens here) ---
+    score = 0.0
+    theme_scores = {}
+    for t, vlist in votes.items():
+        raw = sum(s for _, s in vlist)
+        capped = max(-CAPS[t], min(CAPS[t], raw))
+        theme_scores[t] = capped
+        score += capped
+
+    cheap = [r for vlist in votes.values() for (r, s) in vlist if s > 0]
+    rich = [r for vlist in votes.values() for (r, s) in vlist if s < 0]
+    n_signals = len(cheap) + len(rich)
 
     # --- verdict ---
     if score >= 3:
@@ -132,13 +146,12 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
     else:
         verdict = "Fairly Valued"
 
-    # --- confidence: agreement of lenses + analyst coverage ---
-    n_signals = len(cheap) + len(rich)
-    agreement = abs(score) / n_signals if n_signals else 0
+    # --- confidence: needs CONVICTION (a clear score), enough independent
+    #     signals, AND real analyst coverage. A borderline score is never 'High'. ---
     n_analysts = snap.get("n_analysts") or 0
-    if n_signals >= 4 and agreement >= 0.6 and n_analysts >= 12:
+    if abs(score) >= 3 and n_signals >= 4 and n_analysts >= 12:
         confidence = "High"
-    elif n_signals >= 3 and agreement >= 0.4:
+    elif abs(score) >= 2 and n_signals >= 3:
         confidence = "Medium"
     else:
         confidence = "Low"
@@ -146,8 +159,7 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
     return {
         "verdict": verdict, "score": score, "confidence": confidence,
         "fair_value": tm, "upside": upside,
-        "cheap": [r for r, _ in cheap], "rich": [r for r, _ in rich],
-        "n_signals": n_signals,
+        "cheap": cheap, "rich": rich, "n_signals": n_signals, "themes": theme_scores,
         "sector": sec, "sector_pe": secbm.get("pe"), "sector_ev": secbm.get("ev_ebitda"),
     }
 
