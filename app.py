@@ -23,11 +23,13 @@ from valuation import value_verdict, overall_verdict, build_board, why_summary
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from watchlist import load_watchlist, save_watchlist, parse_tickers
+from tracker import log_verdicts, score_log
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
-VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News"]
+VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar",
+         "🌎 Market News", "📈 Track Record"]
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +55,11 @@ def load_market_news():
 def load_board(tickers: tuple):
     """Run the full verdict engine across a watchlist (tuple so it's cacheable)."""
     return build_board(list(tickers)), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def score_tracker():
+    return score_log()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -558,6 +565,71 @@ elif view == VIEWS[3]:
             st.caption("No market news returned right now — try Refresh.")
     except Exception as e:
         st.error(f"Couldn't load market news: {e}")
+
+# ===========================================================================
+# VIEW 5: Track Record -- is the bot actually right?
+# ===========================================================================
+elif view == VIEWS[4]:
+    st.markdown("### 📈 Track record — is the bot actually right?")
+    st.caption("Log today's verdicts, then come back over weeks and months to see "
+               "whether **BUY leans actually beat AVOIDs** — measured against the "
+               "S&P 500 (SPY), because beating the market is the only bar that counts. "
+               "This is the only honest way to know if any of this works.")
+
+    if st.button("📌 Log today's watchlist verdicts", type="primary"):
+        wl = load_watchlist()
+        with st.spinner("Scoring & logging today's verdicts…"):
+            rows, _ = load_board(tuple(wl))
+            n = log_verdicts(rows)
+        score_tracker.clear()
+        st.success(f"Logged {n} verdicts for today. Come back later to see how they age.")
+
+    try:
+        scored = score_tracker()
+    except Exception as e:
+        scored = None
+        st.error(f"Couldn't score the log: {e}")
+
+    if not scored:
+        st.info("No verdicts logged yet. Click **Log today's watchlist verdicts** to "
+                "start your track record — then check back in a few weeks. The whole "
+                "point is that it takes time to mean anything.")
+    else:
+        st.markdown(f"#### Scorecard — {scored['n']} verdicts, up to {scored['days_span']} days old")
+        if scored["days_span"] < 14:
+            st.warning("⏳ This is far too fresh to mean anything — returns over a few "
+                       "days are pure noise. Keep logging; judge it in months, not days.")
+
+        summ = scored["summary"]
+        if summ is not None and not summ.empty:
+            st.dataframe(summ, hide_index=True, use_container_width=True, column_config={
+                "n": st.column_config.NumberColumn("# verdicts"),
+                "avg_return": st.column_config.NumberColumn("Avg return", format="%.1f%%"),
+                "avg_vs_spy": st.column_config.NumberColumn("Avg vs SPY", format="%+.1f%%"),
+                "beat_spy": st.column_config.NumberColumn("Beat SPY", format="%.0f%%"),
+            })
+
+            # the headline honest question: do BUY leans beat AVOID leans vs SPY?
+            by = summ.set_index("stance")["avg_vs_spy"].to_dict()
+            buy, avoid = by.get("BUY LEAN"), by.get("AVOID LEAN")
+            if buy is not None and avoid is not None:
+                spread = buy - avoid
+                msg = (f"So far, **BUY leans are beating AVOID leans by {spread:+.1f}%** "
+                       "vs the S&P 500." if spread > 0 else
+                       f"So far, there's **no edge** — BUY leans trail AVOIDs by "
+                       f"{spread:.1f}% vs SPY. That's a valuable answer too.")
+                (st.success if spread > 0 else st.warning)(
+                    msg + "  _(Tiny sample — don't read much into it yet.)_")
+
+        st.markdown("#### Every logged verdict, graded")
+        st.dataframe(
+            scored["detail"].sort_values("date"), hide_index=True,
+            use_container_width=True, column_config={
+                "logged_price": st.column_config.NumberColumn(format="$%.2f"),
+                "current_price": st.column_config.NumberColumn(format="$%.2f"),
+                "return_%": st.column_config.NumberColumn("Return", format="%+.1f%%"),
+                "vs_SPY_%": st.column_config.NumberColumn("vs SPY", format="%+.1f%%"),
+            })
 
 # ---- shared footer ---------------------------------------------------------
 st.divider()
