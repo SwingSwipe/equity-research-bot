@@ -26,6 +26,11 @@ HARD LIMITS (say them, don't bury them):
 """
 
 
+# yfinance's sector name for banks/insurers/etc. -- where EV/EBITDA and FCF yield
+# don't apply (banks have no meaningful EBITDA or free cash flow in the usual sense).
+FINANCIAL_SECTORS = {"Financial Services"}
+
+
 def _fcf_yield(snap):
     fcf, mcap = snap.get("fcf"), snap.get("market_cap")
     return (fcf / mcap) if (fcf and mcap) else None
@@ -46,6 +51,7 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
         benchmarks = load_benchmarks()
     sec = snap.get("sector")
     secbm = benchmarks.get(sec, {}) if sec else {}
+    is_financial = sec in FINANCIAL_SECTORS      # banks/insurers need special handling
 
     price = snap.get("price") or snap.get("current_price")
 
@@ -103,7 +109,7 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
             add("multiples", f"P/E {pe:.1f} is above the {sec} sector median of "
                 f"{pe_med:.0f} — expensive for its sector.", -1)
     ee, ee_med = snap.get("ev_ebitda"), secbm.get("ev_ebitda")
-    if isinstance(ee, (int, float)) and ee > 0:
+    if not is_financial and isinstance(ee, (int, float)) and ee > 0:
         if ee_med:
             ratio = ee / ee_med
             if ratio < 0.8:
@@ -117,8 +123,8 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
         elif ee > 20:
             add("multiples", f"EV/EBITDA {ee:.1f} (>20) — richly valued on cash earnings.", -1)
 
-    # --- CASH theme: free-cash-flow yield ---
-    fy = _fcf_yield(snap)
+    # --- CASH theme: free-cash-flow yield (not meaningful for financials) ---
+    fy = None if is_financial else _fcf_yield(snap)
     if fy is not None:
         if fy > 0.05:
             add("cash", f"Free-cash-flow yield {fy:.1%} — strong cash return for the price.", 1)
@@ -156,11 +162,38 @@ def value_verdict(snap: dict, benchmarks: dict = None) -> dict:
     else:
         confidence = "Low"
 
+    # --- DATA-SANITY FLAGS: warn when an input is broken or misleading, so the
+    #     verdict is never silently built on garbage. ---
+    flags = []
+    pb = snap.get("pb")
+    if isinstance(pb, (int, float)) and pb < 0:
+        flags.append("Negative book value — P/B is meaningless here (heavy buybacks "
+                     "or negative equity).")
+    if not (isinstance(snap.get("pe"), (int, float)) and snap["pe"] > 0):
+        flags.append("No positive trailing earnings — P/E and PEG don't apply; the "
+                     "read leans on forward estimates and analyst targets.")
+    if is_financial:
+        flags.append("Financial-sector company — EV/EBITDA and free-cash-flow yield "
+                     "aren't meaningful for banks/insurers, so they're skipped; P/E "
+                     "and analyst views carry the valuation (P/B matters more here).")
+    roe = snap.get("roe")
+    if isinstance(roe, (int, float)) and roe > 0.6:
+        flags.append(f"ROE of {roe * 100:.0f}% is likely flattered by buybacks / low "
+                     "equity — treat the quality read with caution.")
+    de = snap.get("de")
+    if isinstance(de, (int, float)) and de > 300:
+        flags.append(f"Very high debt/equity ({de:.0f}) — may reflect buybacks or "
+                     "sector norms rather than distress; interpret carefully.")
+    if secbm.get("_n") and secbm["_n"] < 5:
+        flags.append(f"Thin sector benchmark (~{secbm['_n']} peers sampled) — the "
+                     "sector comparison is rough.")
+
     return {
         "verdict": verdict, "score": score, "confidence": confidence,
         "fair_value": tm, "upside": upside,
         "cheap": cheap, "rich": rich, "n_signals": n_signals, "themes": theme_scores,
         "sector": sec, "sector_pe": secbm.get("pe"), "sector_ev": secbm.get("ev_ebitda"),
+        "flags": flags,
     }
 
 

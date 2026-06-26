@@ -231,6 +231,13 @@ if view == VIEWS[0]:
         # ---- THE BOTTOM LINE: a plain-English summary of the whole verdict ----
         st.markdown(f"> {esc(why_summary(snap, bias, val, overall))}")
 
+        # ---- DATA-QUALITY FLAGS: tell the user when an input is shaky ----
+        if val.get("flags"):
+            with st.expander(f"⚠️ Data-quality notes ({len(val['flags'])}) — "
+                             "why parts of this verdict may be shaky"):
+                for f in val["flags"]:
+                    st.markdown(f"- {esc(f)}")
+
         # ---- key numbers (now valuation-led) ----
         up = val["upside"]
         c1, c2, c3, c4, c5, c6 = st.columns(6)
