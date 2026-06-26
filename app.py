@@ -102,6 +102,22 @@ def go_to_research(ticker: str):
     st.rerun()
 
 
+def open_picker(tickers, key):
+    """A dead-simple, always-works dropdown to open a ticker in Stock Research.
+    Used alongside the clickable tables so navigation never feels broken."""
+    options = ["— pick a stock —"] + list(dict.fromkeys(tickers))   # dedupe, keep order
+
+    def _go():
+        sym = st.session_state.get(key)
+        if sym and not sym.startswith("—"):
+            st.session_state._pending_ticker = sym
+            st.session_state._pending_view = VIEWS[0]
+            st.session_state.nav_token += 1
+            st.session_state[key] = options[0]            # reset so it's reusable
+
+    st.selectbox("🔍 Open a stock in Research", options, key=key, on_change=_go)
+
+
 def selectable_table(df, base_key, column_config=None, symbol_col="Symbol"):
     """Show a dataframe whose rows are clickable; return the clicked ticker."""
     if df is None or df.empty:
@@ -380,7 +396,8 @@ if view == VIEWS[0]:
 elif view == VIEWS[1]:
     st.markdown("### 📋 Watchlist — buy / watch / avoid")
     st.caption("Your stocks, each run through the full valuation + trend engine. "
-               "**Click any row** to open it in Stock Research. Not financial advice.")
+               "**Use the dropdown below (or click a row's checkbox)** to open one in "
+               "Stock Research. Not financial advice.")
 
     wl = load_watchlist()
     with st.expander("✏️ Edit your watchlist"):
@@ -402,6 +419,7 @@ elif view == VIEWS[1]:
     if board:
         df = pd.DataFrame(board)
         st.caption(f"{len(df)} stocks scored · data as of {board_at}")
+        open_picker(df["Ticker"].tolist(), "wl_open")     # reliable way to open a stock
         cfg = {
             "Price": st.column_config.NumberColumn(format="$%.2f"),
             "Upside %": st.column_config.NumberColumn(format="%+.1f%%"),
@@ -443,8 +461,8 @@ elif view == VIEWS[1]:
 elif view == VIEWS[2]:
     st.markdown("### 📡 What's worth a look right now")
     st.caption("Stocks with a **catalyst** — a reason they're in play today. "
-               "**Click any row** to load that ticker in Stock Research. "
-               "A catalyst is a reason to *research*, not a reason to buy.")
+               "**Use the dropdown below (or click a row's checkbox)** to open one in "
+               "Stock Research. A catalyst is a reason to *research*, not a reason to buy.")
 
     try:
         with st.spinner("Scanning the market…"):
@@ -455,6 +473,15 @@ elif view == VIEWS[2]:
 
     if radar:
         st.caption(f"Data as of {radar['at']}")
+
+        # collect every ticker shown on the radar for the dropdown picker
+        radar_syms = []
+        for k in ["earnings", "surprises", "gainers", "losers", "actives", "ipos"]:
+            d = radar.get(k)
+            if d is not None and not d.empty and "Symbol" in d:
+                radar_syms += d["Symbol"].dropna().tolist()
+        open_picker(radar_syms, "radar_open")
+
         picked = None      # first ticker clicked anywhere wins
 
         # --- earnings ---
