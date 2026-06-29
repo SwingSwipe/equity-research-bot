@@ -25,12 +25,13 @@ from catalysts import (get_movers, get_upcoming_earnings,
 from watchlist import load_watchlist, save_watchlist, parse_tickers
 from tracker import log_verdicts, score_log
 from portfolio import build_portfolio, value_portfolio, load_portfolio
+from smallcap import explore_smallcaps
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
-VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar",
-         "🌎 Market News", "📈 Track Record", "💼 Portfolio"]
+VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News",
+         "📈 Track Record", "💼 Portfolio", "🔬 Small-Caps"]
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +67,11 @@ def score_tracker():
 @st.cache_data(ttl=300, show_spinner=False)
 def value_paper_portfolio():
     return value_portfolio()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_smallcaps():
+    return explore_smallcaps(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -705,6 +711,60 @@ elif view == VIEWS[5]:
                     build_portfolio(load_watchlist())
                 value_paper_portfolio.clear()
                 st.rerun()
+
+# ===========================================================================
+# VIEW 7: Small-Cap Explorer -- a trap detector, NOT a boom finder
+# ===========================================================================
+elif view == VIEWS[6]:
+    st.markdown("### 🔬 Small-Cap Explorer — a *trap detector*, not a boom finder")
+    st.error(
+        "**Read this first.** There is no tool that finds penny stocks that will "
+        "'boom' — if there were, nobody would share it. This is the most dangerous, "
+        "manipulated, survivorship-biased corner of the market: most micro-caps go to "
+        "zero, and it's where pump-and-dumps live. Research shows speculative 'junk' "
+        "small-caps have **negative** long-run returns while *quality* compounds. So "
+        "this tool does the opposite of picking winners — it flags the **traps**, and "
+        "ranks by RISK (lowest first), never by upside. Even the top names here are "
+        "high-risk. **Not investment advice.**")
+    st.caption("Universe = today's small-cap movers from Yahoo's screens (where pumps "
+               "surface), triaged against SEC/FINRA microcap-fraud red flags + basic "
+               "quality checks. Click a row to run the full research engine on it.")
+
+    try:
+        with st.spinner("Scanning small-caps…"):
+            sc, sc_at = load_smallcaps()
+    except Exception as e:
+        sc = None
+        st.error(f"Couldn't load small-caps: {e}")
+
+    if sc is not None and not sc.empty:
+        prof = int((sc["Profitable"] == "✓").sum())
+        st.caption(f"{len(sc)} candidates · only **{prof}** are even profitable · "
+                   f"data as of {sc_at}")
+        cols = ["Symbol", "Name", "Price", "Cap ($M)", "Today %", "Profitable",
+                "Risk", "Flags", "Top concern"]
+        picked = selectable_table(sc[cols], "smallcap", {
+            "Price": st.column_config.NumberColumn(format="$%.3f"),
+            "Today %": st.column_config.NumberColumn(format="%+.1f%%"),
+        }, "Symbol")
+        if picked:
+            go_to_research(picked)
+
+        with st.expander("📋 What the red flags mean — and the research behind them"):
+            st.markdown(
+                "- **Sub-$1 / penny price** — extreme volatility, dilution, delisting risk\n"
+                "- **Nano/micro-cap** — tiny float = easily manipulated, thin coverage\n"
+                "- **Unprofitable** — burning cash, usually funded by issuing/diluting shares\n"
+                "- **Spiking on huge volume** — the classic pump-and-dump pattern (SEC/FINRA)\n"
+                "- **Very low dollar volume** — illiquid; you may not be able to sell\n"
+                "- **Ticker ends in 'Q'** — company is in bankruptcy\n"
+                "- **Near 52-week low** — persistent decline; the market may know something\n\n"
+                "Sources: [SEC/FINRA microcap fraud warnings](https://www.finra.org/investors/insights/pump-and-dump-scams), "
+                "[Investor.gov stock-promotion alerts](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-alerts/investor-35), "
+                "[\"Quality Minus Junk\" (Asness, Frazzini, Pedersen)](http://www.econ.yale.edu/~shiller/behfin/2013_04-10/asness-frazzini-pedersen.pdf), "
+                "[WisdomTree on the small-cap junk 'mirage'](https://www.wisdomtree.com/investments/blog/2026/01/09/dont-mistake-speculation-for-strength-the-mirage-of-small-cap-junk-outperformance).")
+    elif sc is not None:
+        st.info("No small-cap candidates returned right now — try Refresh.")
 
 # ---- shared footer ---------------------------------------------------------
 st.divider()
