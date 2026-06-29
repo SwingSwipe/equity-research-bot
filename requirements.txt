@@ -1,5 +1,10 @@
-yfinance>=1.4.1
-pandas>=3.0.0
-streamlit>=1.58.0
-lxml>=5.0.0
-matplotlib>=3.8.0
+# Everything the app imports. Floors are loose so it installs cleanly on
+# Streamlit Community Cloud's Python (don't pin to the bleeding edge).
+streamlit>=1.40
+yfinance>=1.4
+pandas>=2.2
+numpy>=1.26
+requests>=2.31
+lxml>=5.0
+anthropic>=0.40
+matplotlib>=3.8

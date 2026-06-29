@@ -17,6 +17,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from analyst import get_snapshot, compute_bias, get_market_news, num, pct
 from valuation import value_verdict, overall_verdict, build_board, why_summary
@@ -170,9 +171,21 @@ with st.sidebar:
         load.clear()
         load_market_news.clear()
         load_radar.clear()
+        load_smallcaps.clear()
         st.rerun()
-    st.caption("Data is live from Yahoo Finance (quotes ~15 min delayed on the "
-               "free feed). Auto-refreshes every 5 min; click above to force it.")
+    st.caption("Data is live from Yahoo Finance (quotes ~15 min delayed on the free "
+               "feed), re-pulled whenever you open or refresh. Click above to force it.")
+
+    # Opt-in auto-refresh: reloads the page on a timer so it self-updates while
+    # left open. Off by default (a reload interrupts what you're doing).
+    auto = st.toggle("Auto-refresh while open", value=False,
+                     help="Reloads the page on a timer to pull fresh data.")
+    if auto:
+        mins = st.select_slider("Every", options=[1, 5, 15, 30], value=5)
+        components.html(
+            f"<script>setTimeout(function(){{window.parent.location.reload();}}, "
+            f"{mins * 60_000});</script>", height=0)
+        st.caption(f"⏱️ Auto-refreshing every {mins} min.")
 
     st.divider()
     st.markdown("### 🤖 AI Analyst (optional)")
