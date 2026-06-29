@@ -32,7 +32,7 @@ from llm import write_thesis, DEFAULT_MODEL
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
 
 VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News",
-         "📈 Track Record", "💼 Portfolio", "🔬 Small-Caps"]
+         "📈 Track Record", "💼 Portfolio", "🎲 Gamble", "🎯 Signals"]
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,15 @@ def news_item(n):
                 unsafe_allow_html=True)
     if n.get("summary"):
         st.caption(n["summary"])
+
+
+def signal_label(stance: str, valuation: str) -> str:
+    """One-glance directional call for the Signals quick-view."""
+    if stance == "BUY LEAN":
+        return "🟢 LONG — strong" if valuation == "Undervalued" else "🟢 LONG opportunity"
+    if stance == "AVOID LEAN":
+        return "🔴 WATCH OUT / short"
+    return "⚪ Neutral"
 
 
 def go_to_research(ticker: str):
@@ -726,10 +735,10 @@ elif view == VIEWS[5]:
                 st.rerun()
 
 # ===========================================================================
-# VIEW 7: Small-Cap Explorer -- a trap detector, NOT a boom finder
+# VIEW: Gamble -- the speculative small-cap corner, a trap detector
 # ===========================================================================
 elif view == VIEWS[6]:
-    st.markdown("### 🔬 Small-Cap Explorer — a *trap detector*, not a boom finder")
+    st.markdown("### 🎲 Gamble — the speculative corner (a *trap detector*, not a boom finder)")
     st.error(
         "**Read this first.** There is no tool that finds penny stocks that will "
         "'boom' — if there were, nobody would share it. This is the most dangerous, "
@@ -778,6 +787,58 @@ elif view == VIEWS[6]:
                 "[WisdomTree on the small-cap junk 'mirage'](https://www.wisdomtree.com/investments/blog/2026/01/09/dont-mistake-speculation-for-strength-the-mirage-of-small-cap-junk-outperformance).")
     elif sc is not None:
         st.info("No small-cap candidates returned right now — try Refresh.")
+
+# ===========================================================================
+# VIEW: Signals -- one-glance directional calls, no clicking in
+# ===========================================================================
+elif view == VIEWS[7]:
+    st.markdown("### 🎯 Signals — quick view, no clicking in")
+    st.caption("Every name with a one-glance call: 🟢 LONG opportunity · ⚪ Neutral · "
+               "🔴 Watch out. Click any row for the full research. Not advice — the bot "
+               "is an unproven second opinion.")
+
+    # --- established names (your watchlist) ---
+    st.markdown("#### 📊 Established names")
+    try:
+        with st.spinner("Scoring your watchlist…"):
+            board, board_at = load_board(tuple(load_watchlist()))
+    except Exception as e:
+        board = None
+        st.error(f"Couldn't score the watchlist: {e}")
+    if board:
+        df = pd.DataFrame(board)
+        df["Signal"] = [signal_label(s, v) for s, v in zip(df["Stance"], df["Valuation"])]
+        # longs first, then by conviction
+        order = {"🟢 LONG — strong": 0, "🟢 LONG opportunity": 1, "⚪ Neutral": 2,
+                 "🔴 WATCH OUT / short": 3}
+        df["_o"] = df["Signal"].map(order).fillna(2)
+        df = df.sort_values(["_o", "_score"], ascending=[True, False])
+        st.caption(f"{len(df)} names · data as of {board_at}")
+        scols = ["Ticker", "Name", "Price", "Signal", "Valuation", "Upside %", "Confidence"]
+        picked = selectable_table(df[scols], "signals", {
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Upside %": st.column_config.NumberColumn(format="%+.1f%%"),
+        }, "Ticker")
+        if picked:
+            go_to_research(picked)
+
+    # --- speculative small-caps (clearly labeled as a gamble) ---
+    st.markdown("#### 🎲 Speculative small-caps — gamble, high risk")
+    st.caption("These are NOT 'long opportunities' — they're the lottery-ticket corner. "
+               "Shown lowest-risk first; even the top ones are dangerous. See the Gamble tab.")
+    try:
+        sc, _ = load_smallcaps()
+    except Exception:
+        sc = None
+    if sc is not None and not sc.empty:
+        g = sc.head(10).copy()
+        g["Signal"] = "🎲 GAMBLE"
+        gcols = ["Symbol", "Name", "Price", "Signal", "Risk", "Profitable"]
+        picked_g = selectable_table(g[gcols], "signals_gamble", {
+            "Price": st.column_config.NumberColumn(format="$%.3f"),
+        }, "Symbol")
+        if picked_g:
+            go_to_research(picked_g)
 
 # ---- shared footer ---------------------------------------------------------
 st.divider()

@@ -16,8 +16,23 @@ HONEST FRAMING (read this, it matters):
   until the answer looks pretty -- that's overfitting, the cardinal sin.
 """
 
+import time
+
 import yfinance as yf
 import pandas as pd
+
+
+def _retry(fn, tries=3, delay=0.6):
+    """Call fn(), retrying on transient failures (Yahoo throttles cloud IPs).
+    Raises the last error if all tries fail."""
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            time.sleep(delay * (i + 1))
+    raise last
 
 
 # ---------------------------------------------------------------------------
@@ -51,9 +66,9 @@ def get_snapshot(ticker: str, light: bool = False) -> dict:
     ticker = ticker.strip().upper()
     t = yf.Ticker(ticker)
 
-    info = t.info                       # big fundamentals dict
-    fast = t.fast_info                  # cheap price/MA/52wk numbers
-    hist = t.history(period="1y")       # 1 year of daily prices (for chart + momentum)
+    info = _retry(lambda: t.info)              # big fundamentals dict
+    fast = t.fast_info                         # cheap price/MA/52wk numbers
+    hist = _retry(lambda: t.history(period="1y"))  # 1y daily prices (chart + momentum)
 
     # 12-month price momentum = total return over the pulled window.
     mom_12m = None
