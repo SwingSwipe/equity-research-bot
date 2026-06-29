@@ -44,8 +44,16 @@ def load_portfolio() -> dict | None:
         return None
 
 
-def build_portfolio(tickers, capital: float = 1000.0, max_names: int = 8) -> dict | None:
-    """Pick the bot's BUY LEANs, equal-weight `capital` across the top names."""
+def _save(port):
+    with open(PORT_FILE, "w") as f:
+        json.dump(port, f, indent=2)
+
+
+def build_portfolio(tickers, capital: float = 1000.0, max_names: int = 8,
+                    save: bool = True) -> dict | None:
+    """Pick the bot's BUY LEANs, equal-weight `capital` across the top names.
+    save=False returns the dict without writing to disk (used by the web app so
+    each visitor's portfolio stays private to their session)."""
     board = build_board(list(tickers))
     if not board:
         return None
@@ -72,8 +80,38 @@ def build_portfolio(tickers, capital: float = 1000.0, max_names: int = 8) -> dic
 
     port = {"created": today, "capital": capital,
             "spy_entry": _spy_price(), "holdings": holdings}
-    with open(PORT_FILE, "w") as f:
-        json.dump(port, f, indent=2)
+    if save:
+        _save(port)
+    return port
+
+
+def build_custom_portfolio(tickers, capital: float = 1000.0,
+                           save: bool = False) -> dict | None:
+    """Equal-weight `capital` across EXACTLY the tickers given (no bot filtering).
+    Used when the user picks their own stocks."""
+    valid = []
+    for tk in tickers:
+        try:
+            price = float(yf.Ticker(tk).fast_info["last_price"])
+            if price > 0:
+                valid.append((tk, price))
+        except Exception:
+            continue
+    if not valid:
+        return None
+
+    alloc = capital / len(valid)
+    today = datetime.today().strftime("%Y-%m-%d")
+    holdings = [{
+        "ticker": tk, "name": tk, "entry_date": today,
+        "entry_price": round(p, 2), "shares": round(alloc / p, 4),
+        "alloc": round(alloc, 2), "valuation": "—", "trend": "—",
+        "confidence": "—", "upside_at_entry": None,
+    } for tk, p in valid]
+    port = {"created": today, "capital": capital,
+            "spy_entry": _spy_price(), "holdings": holdings}
+    if save:
+        _save(port)
     return port
 
 
