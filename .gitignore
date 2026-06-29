@@ -16,4 +16,4 @@ ranked_watchlist.csv
 .DS_Store
 .vscode/
 .idea/
-portfolio.json
+.local_mode

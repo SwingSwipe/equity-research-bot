@@ -693,9 +693,9 @@ elif view == VIEWS[4]:
 # ===========================================================================
 elif view == VIEWS[5]:
     st.markdown("### 💼 Paper portfolio")
-    st.caption("Set your own starting amount and pick your own stocks (or let the bot "
-               "pick), then track it vs the S&P 500. **Private to your session — nobody "
-               "else sees it.** Paper money, real prices. Not investment advice.")
+    st.caption("A live **$1,000 demo** of the bot's picks, tracked vs the S&P 500 — the "
+               "bot's public track record. Want your own? Build one below — **that one's "
+               "private to your session.** Paper money, real prices. Not investment advice.")
 
     port = st.session_state.get("portfolio")
 
@@ -768,8 +768,8 @@ elif view == VIEWS[5]:
                     st.success("Saved ✓ — your local app and weekly auto-report will "
                                "now track this portfolio.")
             else:
-                st.caption("ℹ️ On the shared web app, portfolios are session-only (private "
-                           "to you, not saved). Run it locally to keep a saved, tracked one.")
+                st.caption("ℹ️ This is the bot's public demo portfolio. Build your own "
+                           "above — it's private to your session and isn't saved.")
 
 # ===========================================================================
 # VIEW: Gamble -- the speculative small-cap corner, a trap detector

@@ -1,0 +1,103 @@
+{
+  "created": "2026-06-25",
+  "capital": 1000.0,
+  "spy_entry": 734.2999877929688,
+  "holdings": [
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "entry_date": "2026-06-25",
+      "entry_price": 195.74,
+      "shares": 0.6386,
+      "alloc": 125.0,
+      "valuation": "Undervalued",
+      "trend": "LONG",
+      "confidence": "High",
+      "upside_at_entry": 52.7
+    },
+    {
+      "ticker": "AAPL",
+      "name": "Apple Inc.",
+      "entry_date": "2026-06-25",
+      "entry_price": 275.15,
+      "shares": 0.4543,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Medium",
+      "upside_at_entry": 14.5
+    },
+    {
+      "ticker": "GOOGL",
+      "name": "Alphabet Inc.",
+      "entry_date": "2026-06-25",
+      "entry_price": 343.71,
+      "shares": 0.3637,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Medium",
+      "upside_at_entry": 25.9
+    },
+    {
+      "ticker": "JPM",
+      "name": "JP Morgan Chase & Co.",
+      "entry_date": "2026-06-25",
+      "entry_price": 335.12,
+      "shares": 0.373,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Low",
+      "upside_at_entry": 2.3
+    },
+    {
+      "ticker": "BAC",
+      "name": "Bank of America Corporation",
+      "entry_date": "2026-06-25",
+      "entry_price": 58.19,
+      "shares": 2.1481,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Low",
+      "upside_at_entry": 9.2
+    },
+    {
+      "ticker": "UNH",
+      "name": "UnitedHealth Group Incorporated",
+      "entry_date": "2026-06-25",
+      "entry_price": 415.53,
+      "shares": 0.3008,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Low",
+      "upside_at_entry": -1.0
+    },
+    {
+      "ticker": "JNJ",
+      "name": "Johnson & Johnson",
+      "entry_date": "2026-06-25",
+      "entry_price": 244.88,
+      "shares": 0.5105,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Low",
+      "upside_at_entry": 5.1
+    },
+    {
+      "ticker": "KO",
+      "name": "Coca-Cola Company (The)",
+      "entry_date": "2026-06-25",
+      "entry_price": 80.42,
+      "shares": 1.5543,
+      "alloc": 125.0,
+      "valuation": "Fairly Valued",
+      "trend": "LONG",
+      "confidence": "Medium",
+      "upside_at_entry": 6.9
+    }
+  ]
+}
