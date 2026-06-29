@@ -49,6 +49,11 @@ def _save(port):
         json.dump(port, f, indent=2)
 
 
+def save_portfolio(port: dict):
+    """Persist a portfolio to disk (used by the local app's Save button only)."""
+    _save(port)
+
+
 def build_portfolio(tickers, capital: float = 1000.0, max_names: int = 8,
                     save: bool = True) -> dict | None:
     """Pick the bot's BUY LEANs, equal-weight `capital` across the top names.

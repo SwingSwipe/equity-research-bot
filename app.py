@@ -13,6 +13,7 @@ view lives in st.session_state, so clicking a ticker on the Radar can set the
 view to "Stock Research" and load that ticker -- the whole point of this build.
 """
 
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -26,11 +27,16 @@ from catalysts import (get_movers, get_upcoming_earnings,
 from watchlist import load_watchlist, save_watchlist, parse_tickers
 from tracker import log_verdicts, score_log
 from portfolio import (build_portfolio, build_custom_portfolio,
-                       value_portfolio, load_portfolio)
+                       value_portfolio, load_portfolio, save_portfolio)
 from smallcap import explore_smallcaps
 from llm import write_thesis, DEFAULT_MODEL
 
 st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wide")
+
+# True only on your own machine (marker file is gitignored, never on the cloud).
+# Gates file-saving so saving stays YOUR feature and the shared app stays private.
+IS_LOCAL = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       ".local_mode"))
 
 VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News",
          "📈 Track Record", "💼 Portfolio", "🎲 Gamble", "🎯 Signals"]
@@ -754,6 +760,16 @@ elif view == VIEWS[5]:
                 })
             st.caption("To **add or remove** a stock, edit the list in *Build / edit* above "
                        "and rebuild (that re-times your entry prices).")
+
+            # Saving is a LOCAL-only feature (keeps the shared cloud app private).
+            if IS_LOCAL:
+                if st.button("💾 Save as my tracked portfolio (this device)"):
+                    save_portfolio(port)
+                    st.success("Saved ✓ — your local app and weekly auto-report will "
+                               "now track this portfolio.")
+            else:
+                st.caption("ℹ️ On the shared web app, portfolios are session-only (private "
+                           "to you, not saved). Run it locally to keep a saved, tracked one.")
 
 # ===========================================================================
 # VIEW: Gamble -- the speculative small-cap corner, a trap detector
