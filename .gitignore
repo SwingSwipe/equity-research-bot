@@ -20,3 +20,6 @@ ranked_watchlist.csv
 
 # API keys / secrets (never commit)
 .streamlit/secrets.toml
+
+# Personal portfolio (private, never public)
+my_portfolio.json

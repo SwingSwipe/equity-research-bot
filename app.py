@@ -26,8 +26,8 @@ from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from watchlist import load_watchlist, save_watchlist, parse_tickers
 from tracker import log_verdicts, score_log
-from portfolio import (build_portfolio, build_custom_portfolio,
-                       value_portfolio, load_portfolio, save_portfolio)
+from portfolio import (build_portfolio, build_custom_portfolio, value_portfolio,
+                       load_portfolio, load_my_portfolio, save_my_portfolio)
 from smallcap import explore_smallcaps
 from llm import write_thesis, DEFAULT_MODEL
 
@@ -79,8 +79,8 @@ def score_tracker():
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def value_paper_portfolio():
-    return value_portfolio()
+def value_demo():
+    return value_portfolio(load_portfolio())     # the public demo, same for everyone
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -183,7 +183,7 @@ st.session_state.setdefault("nav_token", 0)
 # Per-SESSION watchlist & portfolio: private to each visitor, never written to
 # shared files. Seeded from the saved files if present (local), else defaults.
 st.session_state.setdefault("watchlist", load_watchlist())
-st.session_state.setdefault("portfolio", load_portfolio())
+st.session_state.setdefault("my_portfolio", load_my_portfolio())   # personal, private
 
 if "_pending_ticker" in st.session_state:
     st.session_state.ticker = st.session_state.pop("_pending_ticker")
@@ -703,87 +703,93 @@ elif view == VIEWS[4]:
             })
 
 # ===========================================================================
-# VIEW 6: Paper portfolio -- private to each session, fully customizable
+# VIEW 6: Portfolio -- public DEMO (everyone) + your private MY PORTFOLIO
 # ===========================================================================
 elif view == VIEWS[5]:
     st.markdown("### 💼 Paper portfolio")
-    st.caption("A live **$1,000 demo** of the bot's picks, tracked vs the S&P 500 — the "
-               "bot's public track record. Want your own? Build one below — **that one's "
-               "private to your session.** Paper money, real prices. Not investment advice.")
 
-    port = st.session_state.get("portfolio")
+    def show_portfolio(v):
+        """Render a valued portfolio's metrics + holdings (used by both sections)."""
+        created = v.get("created")
+        days = (datetime.today() - datetime.strptime(created, "%Y-%m-%d")).days if created else 0
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Value", f"${v['total_value']:,.2f}", f"{v['total_return_pct']:+.2f}%")
+        c2.metric("Beating the market by",
+                  f"{v['excess_pct']:+.2f}%" if v['excess_pct'] is not None else "--")
+        c3.metric("S&P 500 (same window)",
+                  f"{v['spy_return_pct']:+.2f}%" if v['spy_return_pct'] is not None else "--")
+        c4.metric("Started with", f"${v['capital']:,.0f}", f"{days} days ago")
+        st.dataframe(v["detail"], hide_index=True, use_container_width=True, column_config={
+            "Entry": st.column_config.NumberColumn(format="$%.2f"),
+            "Now": st.column_config.NumberColumn(format="$%.2f"),
+            "Value": st.column_config.NumberColumn(format="$%.2f"),
+            "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
+            "P&L $": st.column_config.NumberColumn(format="$%+.2f"),
+        })
 
-    with st.expander("⚙️ Build / edit your portfolio", expanded=(port is None)):
-        capital = st.number_input("Starting amount ($)", min_value=50.0,
-                                  max_value=10_000_000.0, value=float(port["capital"]) if port else 1000.0,
-                                  step=100.0)
-        default_tk = (", ".join(h["ticker"] for h in port["holdings"]) if port
+    # ---- 1. THE DEMO (public — everyone sees this one) ----
+    st.markdown("#### 📊 Demo — the bot's $1,000 track record")
+    st.caption("The bot's public paper portfolio, tracked vs the S&P 500. **Everyone sees this one.**")
+    try:
+        dv = value_demo()
+    except Exception as e:
+        dv = None
+        st.error(f"Couldn't value the demo: {e}")
+    if dv:
+        show_portfolio(dv)
+
+    st.divider()
+
+    # ---- 2. MY PORTFOLIO (private to this session / device) ----
+    st.markdown("#### 💼 My portfolio")
+    st.caption("Build your own — any amount, any stocks. **Private to you; nobody else sees it.** "
+               "Separate from the demo above. Not investment advice.")
+    mine = st.session_state.get("my_portfolio")
+    with st.expander("⚙️ Build / edit my portfolio", expanded=(mine is None)):
+        capital = st.number_input("Starting amount ($)", min_value=50.0, max_value=10_000_000.0,
+                                  value=float(mine["capital"]) if mine else 1000.0, step=100.0)
+        default_tk = (", ".join(h["ticker"] for h in mine["holdings"]) if mine
                       else ", ".join(st.session_state.watchlist[:8]))
         ptext = st.text_area("Stocks (comma/space separated) — add or delete any",
-                             value=default_tk, key="port_text", height=70)
+                             value=default_tk, key="my_port_text", height=70)
         b1, b2 = st.columns(2)
         with b1:
             if st.button("📈 Build with these stocks", type="primary"):
                 tk = parse_tickers(ptext)
                 if tk:
                     with st.spinner("Pricing & allocating…"):
-                        st.session_state.portfolio = build_custom_portfolio(tk, capital=capital)
+                        st.session_state.my_portfolio = build_custom_portfolio(tk, capital=capital)
                     st.rerun()
         with b2:
             if st.button("🤖 Let the bot pick (BUY LEANs)"):
                 with st.spinner("Scoring your watchlist & picking BUY LEANs…"):
-                    st.session_state.portfolio = build_portfolio(
+                    st.session_state.my_portfolio = build_portfolio(
                         st.session_state.watchlist, capital=capital, save=False)
                 st.rerun()
-        if port and st.button("🗑️ Clear portfolio"):
-            st.session_state.portfolio = None
+        if mine and st.button("🗑️ Clear my portfolio"):
+            st.session_state.my_portfolio = None
             st.rerun()
 
-    port = st.session_state.get("portfolio")
-    if not port:
-        st.info("👆 Set an amount and build a portfolio above — it's yours, private to you.")
+    mine = st.session_state.get("my_portfolio")
+    if not mine:
+        st.info("👆 Build your own above — it's private to you, separate from the demo.")
     else:
         try:
-            v = value_portfolio(port)
+            mv = value_portfolio(mine)
         except Exception as e:
-            v = None
-            st.error(f"Couldn't value the portfolio: {e}")
-
-        if v:
-            created = v.get("created")
-            days = (datetime.today() - datetime.strptime(created, "%Y-%m-%d")).days if created else 0
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Portfolio value", f"${v['total_value']:,.2f}",
-                      f"{v['total_return_pct']:+.2f}%")
-            c2.metric("Beating the market by",
-                      f"{v['excess_pct']:+.2f}%" if v['excess_pct'] is not None else "--")
-            c3.metric("S&P 500 (same window)",
-                      f"{v['spy_return_pct']:+.2f}%" if v['spy_return_pct'] is not None else "--")
-            c4.metric("Started with", f"${v['capital']:,.0f}", f"{days} days ago")
-
-            if days < 14:
+            mv = None
+            st.error(f"Couldn't value your portfolio: {e}")
+        if mv:
+            show_portfolio(mv)
+            created = mv.get("created")
+            if created and (datetime.today() - datetime.strptime(created, "%Y-%m-%d")).days < 14:
                 st.warning("⏳ Brand new — a few days of returns are noise. Let it run for weeks.")
-
-            st.dataframe(
-                v["detail"], hide_index=True, use_container_width=True, column_config={
-                    "Entry": st.column_config.NumberColumn(format="$%.2f"),
-                    "Now": st.column_config.NumberColumn(format="$%.2f"),
-                    "Value": st.column_config.NumberColumn(format="$%.2f"),
-                    "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
-                    "P&L $": st.column_config.NumberColumn(format="$%+.2f"),
-                })
-            st.caption("To **add or remove** a stock, edit the list in *Build / edit* above "
-                       "and rebuild (that re-times your entry prices).")
-
-            # Saving is a LOCAL-only feature (keeps the shared cloud app private).
             if IS_LOCAL:
-                if st.button("💾 Save as my tracked portfolio (this device)"):
-                    save_portfolio(port)
-                    st.success("Saved ✓ — your local app and weekly auto-report will "
-                               "now track this portfolio.")
+                if st.button("💾 Save my portfolio (this device)"):
+                    save_my_portfolio(mine)
+                    st.success("Saved ✓ — it'll reload next time you open the app locally.")
             else:
-                st.caption("ℹ️ This is the bot's public demo portfolio. Build your own "
-                           "above — it's private to your session and isn't saved.")
+                st.caption("ℹ️ On the web app your portfolio is session-only (private, not saved).")
 
 # ===========================================================================
 # VIEW: Gamble -- the speculative small-cap corner, a trap detector

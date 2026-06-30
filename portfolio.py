@@ -26,7 +26,8 @@ import yfinance as yf
 
 from valuation import build_board
 
-PORT_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
+PORT_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")       # public demo
+MY_PORT_FILE = os.path.join(os.path.dirname(__file__), "my_portfolio.json")  # personal (gitignored)
 
 
 def _finnhub_quote(symbol):
@@ -78,6 +79,20 @@ def load_portfolio() -> dict | None:
             return json.load(f)
     except Exception:
         return None
+
+
+def load_my_portfolio() -> dict | None:
+    """Your PERSONAL portfolio (separate file, gitignored, never public)."""
+    try:
+        with open(MY_PORT_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_my_portfolio(port: dict):
+    with open(MY_PORT_FILE, "w") as f:
+        json.dump(port, f, indent=2)
 
 
 def _save(port):
