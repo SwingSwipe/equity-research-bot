@@ -57,8 +57,32 @@ def num(x, dollars=False):
 # ---------------------------------------------------------------------------
 # 1. GATHER THE DATA
 # ---------------------------------------------------------------------------
+USE_FINNHUB = False   # app.py sets this True on the cloud (where Yahoo is throttled)
+
+
 def get_snapshot(ticker: str, light: bool = False) -> dict:
-    """Pull everything we need about one stock into a single dict.
+    """Get a stock snapshot. Uses Finnhub when USE_FINNHUB is set (reliable on the
+    cloud), else yfinance (full-featured locally) -- with a Finnhub fallback if
+    yfinance fails."""
+    ticker = ticker.strip().upper()
+    if USE_FINNHUB:
+        try:
+            from provider import get_snapshot_finnhub, available
+            if available():
+                return get_snapshot_finnhub(ticker, light)
+        except Exception:
+            pass
+    try:
+        return _yf_snapshot(ticker, light)
+    except Exception:
+        from provider import get_snapshot_finnhub, available
+        if available():
+            return get_snapshot_finnhub(ticker, light)
+        raise
+
+
+def _yf_snapshot(ticker: str, light: bool = False) -> dict:
+    """Pull everything we need about one stock into a single dict, via yfinance.
 
     light=True skips news + earnings + business summary. The screener uses
     this so it isn't pulling news for dozens of stocks it only wants to rank.

@@ -17,3 +17,6 @@ ranked_watchlist.csv
 .vscode/
 .idea/
 .local_mode
+
+# API keys / secrets (never commit)
+.streamlit/secrets.toml

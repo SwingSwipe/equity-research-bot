@@ -29,11 +29,47 @@ from valuation import build_board
 PORT_FILE = os.path.join(os.path.dirname(__file__), "portfolio.json")
 
 
+def _finnhub_quote(symbol):
+    try:
+        from provider import _get, available
+        if available():
+            q = _get("quote", symbol=symbol)
+            if q and q.get("c"):
+                return float(q["c"])
+    except Exception:
+        pass
+    return None
+
+
 def _spy_price():
     try:
         return float(yf.Ticker("SPY").fast_info["last_price"])
     except Exception:
-        return None
+        return _finnhub_quote("SPY")
+
+
+def _current_prices(symbols) -> dict:
+    """Current price per symbol: yfinance first, Finnhub fallback (cloud-reliable)."""
+    symbols = list(symbols)
+    prices = {}
+    try:
+        data = yf.download(symbols, period="5d", progress=False)["Close"]
+        if isinstance(data, pd.Series):
+            data = data.to_frame()
+        for s in symbols:
+            try:
+                v = float(data[s].dropna().iloc[-1])
+                if v > 0:
+                    prices[s] = v
+            except Exception:
+                pass
+    except Exception:
+        pass
+    for s in [s for s in symbols if s not in prices]:      # Finnhub for any missing
+        q = _finnhub_quote(s)
+        if q:
+            prices[s] = q
+    return prices
 
 
 def load_portfolio() -> dict | None:
@@ -94,14 +130,8 @@ def build_custom_portfolio(tickers, capital: float = 1000.0,
                            save: bool = False) -> dict | None:
     """Equal-weight `capital` across EXACTLY the tickers given (no bot filtering).
     Used when the user picks their own stocks."""
-    valid = []
-    for tk in tickers:
-        try:
-            price = float(yf.Ticker(tk).fast_info["last_price"])
-            if price > 0:
-                valid.append((tk, price))
-        except Exception:
-            continue
+    prices = _current_prices(tickers)
+    valid = [(tk, prices[tk]) for tk in tickers if prices.get(tk)]
     if not valid:
         return None
 
@@ -127,22 +157,11 @@ def value_portfolio(port: dict = None) -> dict | None:
         return None
 
     tickers = [h["ticker"] for h in port["holdings"]]
-    try:
-        data = yf.download(tickers + ["SPY"], period="5d", progress=False)["Close"]
-    except Exception:
-        return None
-    if isinstance(data, pd.Series):
-        data = data.to_frame()
-
-    def last(tk):
-        try:
-            return float(data[tk].dropna().iloc[-1])
-        except Exception:
-            return None
+    prices = _current_prices(tickers + ["SPY"])
 
     rows, total_value, total_cost = [], 0.0, 0.0
     for h in port["holdings"]:
-        cur = last(h["ticker"])
+        cur = prices.get(h["ticker"])
         if cur is None:
             continue
         value = h["shares"] * cur
@@ -157,7 +176,7 @@ def value_portfolio(port: dict = None) -> dict | None:
         })
 
     port_ret = (total_value / total_cost - 1) if total_cost else 0.0
-    spy_now, spy_entry = last("SPY"), port.get("spy_entry")
+    spy_now, spy_entry = prices.get("SPY"), port.get("spy_entry")
     spy_ret = (spy_now / spy_entry - 1) if (spy_now and spy_entry) else None
     excess = (port_ret - spy_ret) if spy_ret is not None else None
 

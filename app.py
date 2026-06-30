@@ -38,6 +38,12 @@ st.set_page_config(page_title="Stock Research Bot", page_icon="📈", layout="wi
 IS_LOCAL = os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                        ".local_mode"))
 
+# On the cloud (where Yahoo throttles), use Finnhub if a key is configured.
+# Locally, keep yfinance for full features (chart, moving averages, targets).
+import analyst as _analyst
+import provider as _provider
+_analyst.USE_FINNHUB = (not IS_LOCAL) and _provider.available()
+
 VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News",
          "📈 Track Record", "💼 Portfolio", "🎲 Gamble", "🎯 Signals"]
 
