@@ -22,9 +22,9 @@ import yfinance as yf
 import pandas as pd
 
 
-def _retry(fn, tries=3, delay=0.6):
-    """Call fn(), retrying on transient failures (Yahoo throttles cloud IPs).
-    Raises the last error if all tries fail."""
+def _retry(fn, tries=4, delay=0.8):
+    """Call fn(), retrying with backoff on transient failures (Yahoo throttles
+    cloud IPs). Raises the last error if all tries fail."""
     last = None
     for i in range(tries):
         try:

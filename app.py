@@ -46,7 +46,7 @@ VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market New
 # DATA LOADERS (cached). Quotes are ~15 min delayed on free Yahoo data; the
 # cache re-pulls every 5 min, and the sidebar Refresh button forces it.
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load(ticker: str):
     snap = get_snapshot(ticker)
     bias = compute_bias(snap)                 # momentum + quality scorecard
@@ -56,23 +56,23 @@ def load(ticker: str):
     return snap, bias, val, overall, fetched_at
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_market_news():
     return get_market_news(limit=25), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_board(tickers: tuple):
     """Run the full verdict engine across a watchlist (tuple so it's cacheable)."""
     return build_board(list(tickers)), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def score_tracker():
     return score_log()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def value_paper_portfolio():
     return value_portfolio()
 
@@ -82,7 +82,7 @@ def load_smallcaps():
     return explore_smallcaps(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_radar():
     return {
         "gainers": get_movers("day_gainers", 15),
@@ -219,6 +219,12 @@ with st.sidebar:
 st.title("📈 Stock Research Bot")
 st.caption("Live news, earnings, price, and a transparent long/short lean. "
            "Research synthesis, **not** investment advice.")
+if not IS_LOCAL:
+    st.info("⚠️ **Free-hosting note:** Yahoo Finance rate-limits this shared cloud server, "
+            "so data can be slow or incomplete here. If a stock or tab won't load, wait a "
+            "moment and hit 🔄 **Refresh**. The app runs fully reliably when cloned and run "
+            "locally — see the [code on GitHub](https://github.com/SwingSwipe/equity-research-bot).",
+            icon="⚠️")
 
 # Navigation. key='view' ties the choice to session_state so code can change it.
 st.segmented_control("Go to", VIEWS, key="view", label_visibility="collapsed")
@@ -235,7 +241,9 @@ if view == VIEWS[0]:
             with st.spinner(f"Researching {ticker}…"):
                 snap, bias, val, overall, fetched_at = load(ticker)
         except Exception as e:
-            st.error(f"Couldn't load '{ticker}'. Is it a valid ticker? ({e})")
+            st.error(f"Couldn't load **{ticker}** — usually this is Yahoo rate-limiting "
+                     "the free cloud server, **not** a bad ticker. Wait a moment and hit "
+                     f"🔄 Refresh, or run the app locally for reliable data. ({type(e).__name__})")
             st.stop()
 
         # yfinance returns EMPTY data (not an error) for a bad symbol, which would
