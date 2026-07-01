@@ -13,6 +13,7 @@ FINNHUB_KEY env var, or the local .streamlit/secrets.toml — never hard-coded.
 
 import os
 
+import pandas as pd
 import requests
 
 BASE = "https://finnhub.io/api/v1"
@@ -178,6 +179,59 @@ def _finnhub_rec(ticker):
                 "bullish_pct": bullish / total if total else None}
     except Exception:
         return None
+
+
+def get_market_news_finnhub(limit=25):
+    """General business/market news (cloud-reliable, unlike Yahoo)."""
+    import datetime as _dt
+    out = []
+    for n in (_get("news", category="general") or [])[:limit]:
+        out.append({
+            "title": n.get("headline"), "summary": n.get("summary"),
+            "publisher": n.get("source"), "url": n.get("url"),
+            "date": _dt.datetime.utcfromtimestamp(n["datetime"]).isoformat() + "Z"
+                    if n.get("datetime") else None,
+        })
+    return out
+
+
+def get_earnings_finnhub(days=7, limit=25):
+    """Upcoming earnings from Finnhub's calendar, shaped like catalysts.get_upcoming_earnings."""
+    import datetime as _dt
+    today = _dt.date.today()
+    data = _get("calendar/earnings", **{"from": today.isoformat(),
+                                        "to": (today + _dt.timedelta(days=days)).isoformat()})
+    cal = (data or {}).get("earningsCalendar", [])
+    timing = {"bmo": "BMO", "amc": "AMC", "dmh": "DMH"}
+    rows = [{
+        "Symbol": e.get("symbol"), "Company": e.get("symbol"),
+        "Event Start Date": pd.to_datetime(e.get("date")),
+        "Timing": timing.get(e.get("hour"), ""),
+        "EPS Estimate": e.get("epsEstimate"), "Marketcap": None,
+    } for e in cal if e.get("symbol")]
+    df = pd.DataFrame(rows)
+    return df.sort_values("Event Start Date").head(limit) if not df.empty else df
+
+
+def get_ipos_finnhub(days_fwd=30, limit=25):
+    """Upcoming IPOs from Finnhub's calendar, shaped like catalysts.get_ipos."""
+    import datetime as _dt
+    today = _dt.date.today()
+    data = _get("calendar/ipo", **{"from": today.isoformat(),
+                                   "to": (today + _dt.timedelta(days=days_fwd)).isoformat()})
+    cal = (data or {}).get("ipoCalendar", [])
+    rows = []
+    for i in cal:
+        pr = (i.get("price") or "").split("-")
+        rows.append({
+            "Symbol": i.get("symbol"), "Company": i.get("name"),
+            "Exchange": i.get("exchange"), "Date": i.get("date"),
+            "Price From": float(pr[0]) if pr and pr[0] else None,
+            "Price To": float(pr[1]) if len(pr) > 1 and pr[1] else None,
+            "Action": i.get("status"),
+        })
+    df = pd.DataFrame(rows)
+    return df.head(limit) if not df.empty else df
 
 
 if __name__ == "__main__":

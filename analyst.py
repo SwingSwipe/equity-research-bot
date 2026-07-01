@@ -258,6 +258,10 @@ def get_market_news(limit: int = 25) -> list:
     under several tickers), and sorts newest-first. ISO date strings sort
     correctly as plain text, so we can sort on them directly.
     """
+    if USE_FINNHUB:
+        from provider import get_market_news_finnhub
+        return get_market_news_finnhub(limit)
+
     seen, out = set(), []
     for tk in MARKET_TICKERS:
         try:

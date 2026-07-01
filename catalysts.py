@@ -20,6 +20,15 @@ import pandas as pd
 import yfinance as yf
 
 
+def _use_finnhub():
+    """True on the cloud (where Yahoo is throttled and Finnhub is used)."""
+    try:
+        import analyst
+        return analyst.USE_FINNHUB
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # TODAY'S MOVERS  (Yahoo's predefined screeners)
 # ---------------------------------------------------------------------------
@@ -43,6 +52,9 @@ def get_movers(which: str = "day_gainers", limit: int = 15) -> pd.DataFrame:
 def get_upcoming_earnings(days: int = 7, limit: int = 25) -> pd.DataFrame:
     """Companies reporting in the next `days` days, soonest first.
     Timing codes: BMO = before market open, AMC = after market close."""
+    if _use_finnhub():
+        from provider import get_earnings_finnhub
+        return get_earnings_finnhub(days, limit)
     now = pd.Timestamp.now(tz="UTC")
     cals = yf.Calendars(start=now, end=now + pd.Timedelta(days=days))
     df = cals.get_earnings_calendar()
@@ -77,6 +89,9 @@ def get_ipos(days_back: int = 5, days_fwd: int = 14, limit: int = 25,
     operating-company IPOs. exclude_funds drops the obvious ones by name so the
     list shows actual companies going public.
     """
+    if _use_finnhub():
+        from provider import get_ipos_finnhub
+        return get_ipos_finnhub(days_fwd, limit)
     now = pd.Timestamp.now(tz="UTC")
     cals = yf.Calendars(start=now - pd.Timedelta(days=days_back),
                         end=now + pd.Timedelta(days=days_fwd))
