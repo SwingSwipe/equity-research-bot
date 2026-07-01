@@ -827,10 +827,13 @@ elif view == VIEWS[6]:
 
     if sc is not None and not sc.empty:
         prof = int((sc["Profitable"] == "✓").sum())
-        st.caption(f"{len(sc)} candidates · only **{prof}** are even profitable · "
-                   f"data as of {sc_at}")
-        cols = ["Symbol", "Name", "Price", "Cap ($M)", "Today %", "Profitable",
-                "Risk", "Flags", "Top concern"]
+        st.caption(f"{len(sc)} candidates · only **{prof}** are even profitable · data as of {sc_at}")
+        st.caption("**Call** is a *momentum + risk* read (fundamentals barely exist here), not a "
+                   "prediction: 🟡 SPEC-LONG = profitable + near highs (the only setup with any "
+                   "history) · 🟠 MOMENTUM = breaking higher on volume (speculative, but this is "
+                   "what 'early' looks like) · 🔴 FADE = pumped, likely to reverse · 🔴 AVOID = "
+                   "broken/falling · ⚪ NO EDGE = coin flip. Leans to AVOID on purpose. **Click a row.**")
+        cols = ["Symbol", "Name", "Price", "Today %", "Call", "Why", "Risk", "Profitable"]
         picked = selectable_table(sc[cols], "smallcap", {
             "Price": st.column_config.NumberColumn(format="$%.3f"),
             "Today %": st.column_config.NumberColumn(format="%+.1f%%"),
