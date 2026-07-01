@@ -25,7 +25,7 @@ from valuation import value_verdict, overall_verdict, build_board, why_summary
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
 from watchlist import load_watchlist, save_watchlist, parse_tickers
-from tracker import log_verdicts, score_log
+from tracker import log_verdicts, score_log, log_gamble, score_gamble
 from portfolio import (build_portfolio, build_custom_portfolio, value_portfolio,
                        load_portfolio, load_my_portfolio, save_my_portfolio)
 from smallcap import explore_smallcaps
@@ -76,6 +76,11 @@ def load_board(tickers: tuple):
 @st.cache_data(ttl=1800, show_spinner=False)
 def score_tracker():
     return score_log()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def score_gamble_tracker():
+    return score_gamble()
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -710,6 +715,35 @@ elif view == VIEWS[4]:
                 "return_%": st.column_config.NumberColumn("Return", format="%+.1f%%"),
                 "vs_SPY_%": st.column_config.NumberColumn("vs SPY", format="%+.1f%%"),
             })
+
+    # ---- Gamble calls track record ----
+    st.divider()
+    st.markdown("#### 🎲 Gamble calls — are they right?")
+    st.caption("Log the Gamble tab's calls and grade them: bullish (SPEC-LONG/MOMENTUM) 'hits' if "
+               "the stock rose; bearish (FADE/AVOID) 'hits' if it fell. NO-EDGE = no bet. Needs "
+               "weeks to mean anything, and small samples lie.")
+    if st.button("🎲 Log today's Gamble calls"):
+        try:
+            sc, _ = load_smallcaps()
+            n = log_gamble(sc)
+            score_gamble_tracker.clear()
+            st.success(f"Logged {n} Gamble calls.")
+        except Exception as e:
+            st.error(f"Couldn't log: {e}")
+    try:
+        gsc = score_gamble_tracker()
+    except Exception:
+        gsc = None
+    if gsc:
+        if gsc["summary"] is not None and not gsc["summary"].empty:
+            st.dataframe(gsc["summary"], hide_index=True, use_container_width=True, column_config={
+                "avg_return": st.column_config.NumberColumn("Avg return", format="%+.1f%%"),
+                "hit_rate": st.column_config.NumberColumn("Hit rate", format="%.0f%%"),
+            })
+        st.dataframe(gsc["detail"].sort_values("date"), hide_index=True, use_container_width=True,
+                     column_config={"return_%": st.column_config.NumberColumn("Return", format="%+.1f%%")})
+    else:
+        st.caption("No Gamble calls logged yet — click above to start.")
 
 # ===========================================================================
 # VIEW 6: Portfolio -- public DEMO (everyone) + your private MY PORTFOLIO

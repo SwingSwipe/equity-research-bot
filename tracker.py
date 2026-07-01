@@ -123,6 +123,60 @@ def score_log() -> dict | None:
             "n": len(detail)}
 
 
+GAMBLE_LOG = os.path.join(os.path.dirname(__file__), "gamble_log.csv")
+
+
+def log_gamble(sc_df) -> int:
+    """Log today's Gamble-tab calls (date, ticker, price, call) to grade later."""
+    today = datetime.today().strftime("%Y-%m-%d")
+    new = pd.DataFrame([{"date": today, "ticker": r["Symbol"],
+                         "price": r["Price"], "call": r["Call"]}
+                        for _, r in sc_df.iterrows()])
+    try:
+        old = pd.read_csv(GAMBLE_LOG)
+    except Exception:
+        old = pd.DataFrame(columns=["date", "ticker", "price", "call"])
+    combined = pd.concat([old, new], ignore_index=True).drop_duplicates(
+        subset=["date", "ticker"], keep="last")
+    combined.to_csv(GAMBLE_LOG, index=False)
+    return len(new)
+
+
+def score_gamble() -> dict | None:
+    """Grade logged Gamble calls: a bullish call (SPEC-LONG/MOMENTUM) 'hits' if the
+    stock rose; a bearish call (FADE/AVOID) 'hits' if it fell. NO-EDGE = no bet."""
+    try:
+        log = pd.read_csv(GAMBLE_LOG)
+    except Exception:
+        return None
+    if log.empty:
+        return None
+    from portfolio import _current_prices
+    prices = _current_prices(sorted(log["ticker"].astype(str).unique()))
+
+    rows = []
+    for _, r in log.iterrows():
+        cur = prices.get(str(r["ticker"]))
+        if cur is None or not r["price"]:
+            continue
+        ret = cur / r["price"] - 1
+        call = str(r["call"])
+        bull = ("SPEC-LONG" in call) or ("MOMENTUM" in call)
+        bear = ("FADE" in call) or ("AVOID" in call)
+        hit = (ret > 0) if bull else (ret < 0) if bear else None
+        rows.append({"date": r["date"], "ticker": r["ticker"], "call": call,
+                     "return_%": round(ret * 100, 1), "hit": hit})
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        return None
+    graded = detail[detail["hit"].notna()]
+    summary = (graded.groupby("call").agg(
+        n=("ticker", "size"), avg_return=("return_%", "mean"),
+        hit_rate=("hit", lambda s: s.sum() / len(s) * 100)).reset_index().round(1)
+        if not graded.empty else pd.DataFrame())
+    return {"detail": detail, "summary": summary, "n": len(detail)}
+
+
 if __name__ == "__main__":
     from valuation import build_board
     print("Logging a few test verdicts…")
