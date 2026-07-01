@@ -45,7 +45,7 @@ import provider as _provider
 _analyst.USE_FINNHUB = (not IS_LOCAL) and _provider.available()
 
 VIEWS = ["🔍 Stock Research", "📋 Watchlist", "📡 Radar", "🌎 Market News",
-         "📈 Track Record", "💼 Portfolio", "🎲 Gamble", "🎯 Signals"]
+         "📈 Track Record", "💼 Portfolio", "🎲 Gamble", "🎯 Signals", "🔢 Screener"]
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,15 @@ def value_demo():
 @st.cache_data(ttl=600, show_spinner=False)
 def load_smallcaps():
     return explore_smallcaps(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_screen():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "screen_ranked.csv")
+        return pd.read_csv(path)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -896,6 +905,43 @@ elif view == VIEWS[7]:
         }, "Symbol")
         if picked_g:
             go_to_research(picked_g)
+
+# ===========================================================================
+# VIEW: Screener -- the S&P 500 ranked on 4 factors (precomputed snapshot)
+# ===========================================================================
+elif view == VIEWS[8]:
+    st.markdown("### 🔢 Screener — the S&P 500 ranked on 4 factors")
+    st.caption("Every stock scored on **Value · Quality · Growth · Momentum** "
+               "(cross-sectional, winsorized z-scores), combined into a composite rank. "
+               "**Click a row to research it.** Not investment advice.")
+
+    sdf = load_screen()
+    if sdf is None or sdf.empty:
+        st.info("Screen snapshot isn't available. (Regenerate with `python screener.py`.)")
+    else:
+        st.caption(f"{len(sdf)} stocks ranked from an S&P 500 sample. Snapshot, not live — "
+                   "and it's *today's* index members, so the **survivorship caveat** applies.")
+        picked = selectable_table(sdf, "screen", {
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "VALUE": st.column_config.NumberColumn(format="%+.2f"),
+            "QUALITY": st.column_config.NumberColumn(format="%+.2f"),
+            "GROWTH": st.column_config.NumberColumn(format="%+.2f"),
+            "MOMENTUM": st.column_config.NumberColumn(format="%+.2f"),
+            "COMPOSITE": st.column_config.NumberColumn(format="%+.2f"),
+        }, "Ticker")
+        if picked:
+            go_to_research(picked)
+        with st.expander("How to read this"):
+            st.markdown(
+                "- Each factor column is a **z-score**: `0` = average for the universe, "
+                "`+1` = one standard deviation better, `-1` = one worse.\n"
+                "- **Value** = cheap on earnings/book/sales · **Quality** = high ROE/margins, "
+                "low debt · **Growth** = revenue & earnings growth · **Momentum** = 12-mo "
+                "return + trend.\n"
+                "- **Composite** = the equal-weighted average → the rank. Equal weights on "
+                "purpose (tuning them to look good is overfitting).\n"
+                "- Outliers are **winsorized** (clipped at the 2nd/98th percentile) so one "
+                "freak number can't dominate.")
 
 # ---- shared footer ---------------------------------------------------------
 st.divider()
