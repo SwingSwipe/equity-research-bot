@@ -24,8 +24,11 @@ from analyst import get_snapshot, compute_bias, get_market_news, num, pct
 from valuation import value_verdict, overall_verdict, build_board, why_summary
 from catalysts import (get_movers, get_upcoming_earnings,
                        get_recent_surprises, get_ipos)
-from watchlist import load_watchlist, save_watchlist, parse_tickers
-from tracker import log_verdicts, score_log, log_gamble, score_gamble
+from watchlist import (load_watchlist, save_watchlist, parse_tickers,
+                       load_gamble_watchlist, save_gamble_watchlist)
+from tracker import (log_verdicts, score_log, log_gamble, score_gamble,
+                     log_mtime, gamble_mtime, log_gamble_watch,
+                     score_gamble_watch, gwatch_mtime)
 from portfolio import (build_portfolio, build_custom_portfolio, value_portfolio,
                        load_portfolio, load_my_portfolio, save_my_portfolio)
 from smallcap import explore_smallcaps
@@ -74,13 +77,20 @@ def load_board(tickers: tuple):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def score_tracker():
+def score_tracker(log_mtime: float = 0.0):
+    # log_mtime is part of the cache key: when the weekly auto-log rewrites the
+    # CSV underneath an open app, the mtime changes and this recomputes.
     return score_log()
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def score_gamble_tracker():
+def score_gamble_tracker(log_mtime: float = 0.0):
     return score_gamble()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def score_gwatch_tracker(log_mtime: float = 0.0):
+    return score_gamble_watch()
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -197,6 +207,7 @@ st.session_state.setdefault("nav_token", 0)
 # Per-SESSION watchlist & portfolio: private to each visitor, never written to
 # shared files. Seeded from the saved files if present (local), else defaults.
 st.session_state.setdefault("watchlist", load_watchlist())
+st.session_state.setdefault("gamble_watchlist", load_gamble_watchlist())   # pinned speculative names
 st.session_state.setdefault("my_portfolio", load_my_portfolio())   # personal, private
 
 if "_pending_ticker" in st.session_state:
@@ -492,13 +503,20 @@ elif view == VIEWS[1]:
                "Stock Research. Not financial advice.")
 
     wl = st.session_state.watchlist
-    with st.expander("✏️ Edit your watchlist (private to your session)"):
+    with st.expander("✏️ Edit your watchlist"):
         text = st.text_area("Tickers (comma or space separated)",
                             value=", ".join(wl), key="wl_text", height=80)
         if st.button("✅ Update list", type="primary"):
             st.session_state.watchlist = parse_tickers(text)
+            if IS_LOCAL:
+                save_watchlist(st.session_state.watchlist)   # persist to disk on this device
             load_board.clear()
             st.rerun()
+        if IS_LOCAL:
+            st.caption("💾 Saved to this device on update — your list (and any gamble "
+                       "names you add) reloads next time you open the app.")
+        else:
+            st.caption("ℹ️ Private to this session on the web app — not saved to disk.")
 
     tickers = st.session_state.watchlist
     board = []
@@ -661,26 +679,40 @@ elif view == VIEWS[4]:
                "S&P 500 (SPY), because beating the market is the only bar that counts. "
                "This is the only honest way to know if any of this works.")
 
-    if st.button("📌 Log today's watchlist verdicts", type="primary"):
+    st.caption("💡 Your **weekly routine now auto-logs changes** every run, so this "
+               "record builds on its own. It logs a name only when its stance "
+               "**changes** — one clean forward bet per decision, not the same "
+               "opinion re-stamped weekly. The button below just runs that check now.")
+
+    if st.button("📌 Log stance changes now", type="primary"):
         wl = load_watchlist()
-        with st.spinner("Scoring & logging today's verdicts…"):
+        with st.spinner("Checking for stance changes to log…"):
             rows, _ = load_board(tuple(wl))
-            n = log_verdicts(rows)
+            res = log_verdicts(rows)
         score_tracker.clear()
-        st.success(f"Logged {n} verdicts for today. Come back later to see how they age.")
+        if res["logged"]:
+            st.success(f"Logged {res['logged']} new/changed verdict(s) "
+                       f"({res['unchanged']} unchanged). Come back later to see how they age.")
+        else:
+            st.info(f"No stance changes since last log — nothing new to record "
+                    f"({res['unchanged']} names unchanged). That's fine; the record only "
+                    "grows when the bot actually changes its mind.")
 
     try:
-        scored = score_tracker()
+        scored = score_tracker(log_mtime())
     except Exception as e:
         scored = None
         st.error(f"Couldn't score the log: {e}")
 
     if not scored:
-        st.info("No verdicts logged yet. Click **Log today's watchlist verdicts** to "
+        st.info("No verdicts logged yet. Click **Log stance changes now** to "
                 "start your track record — then check back in a few weeks. The whole "
                 "point is that it takes time to mean anything.")
     else:
         st.markdown(f"#### Scorecard — {scored['n']} verdicts, up to {scored['days_span']} days old")
+        if scored.get("ungraded"):
+            st.caption(f"ℹ️ {scored['ungraded']} logged verdict(s) can't be priced yet "
+                       "(too recent or ticker not found) and are held out of the grade below.")
         if scored["days_span"] < 14:
             st.warning("⏳ This is far too fresh to mean anything — returns over a few "
                        "days are pure noise. Keep logging; judge it in months, not days.")
@@ -731,7 +763,7 @@ elif view == VIEWS[4]:
         except Exception as e:
             st.error(f"Couldn't log: {e}")
     try:
-        gsc = score_gamble_tracker()
+        gsc = score_gamble_tracker(gamble_mtime())
     except Exception:
         gsc = None
     if gsc:
@@ -769,6 +801,9 @@ elif view == VIEWS[5]:
             "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
             "P&L $": st.column_config.NumberColumn(format="$%+.2f"),
         })
+        if v.get("unpriced"):
+            st.caption(f"ℹ️ Couldn't fetch a live price for {', '.join(v['unpriced'])} — "
+                       "held flat at entry (0% return) so the total stays honest, not dropped.")
 
     # ---- 1. THE DEMO (public — everyone sees this one) ----
     st.markdown("#### 📊 Demo — the bot's $1,000 track record")
@@ -851,6 +886,59 @@ elif view == VIEWS[6]:
     st.caption("Universe = today's small-cap movers from Yahoo's screens (where pumps "
                "surface), triaged against SEC/FINRA microcap-fraud red flags + basic "
                "quality checks. Click a row to run the full research engine on it.")
+
+    # ---- 📌 Your pinned gamble watchlist (tracked forward, kept separate) ----
+    st.markdown("#### 📌 Your gamble watchlist — names you're deliberately following")
+    gw = st.session_state.gamble_watchlist
+    st.caption("Pin speculative names here to track **where they go over time vs SPY**. "
+               "Kept SEPARATE from your main watchlist and paper portfolio, so gambles "
+               "never muddy the disciplined record. The daily movers list below churns; "
+               "this list is the one that follows *your* picks. Still high-risk, not advice.")
+    with st.expander(f"✏️ Edit / log pinned names{f' ({len(gw)})' if gw else ''}"):
+        gtext = st.text_area("Tickers (comma or space separated)",
+                             value=", ".join(gw), key="gw_text", height=68)
+        cA, cB = st.columns(2)
+        if cA.button("✅ Update pinned list", type="primary"):
+            st.session_state.gamble_watchlist = parse_tickers(gtext)
+            if IS_LOCAL:
+                save_gamble_watchlist(st.session_state.gamble_watchlist)
+            st.rerun()
+        if cB.button("📌 Log pinned names now"):
+            picks = st.session_state.gamble_watchlist
+            if picks:
+                with st.spinner("Logging pinned gamble names…"):
+                    res = log_gamble_watch(build_board(picks))
+                score_gwatch_tracker.clear()
+                if res["logged"]:
+                    st.success(f"Logged {res['logged']} pinned name(s). Come back to see how they age.")
+                else:
+                    st.info(f"No stance changes to log ({res['unchanged']} unchanged).")
+            else:
+                st.warning("Add some tickers first.")
+        st.caption("💾 Saved to this device on update." if IS_LOCAL
+                   else "ℹ️ Session-only on the web app (private, not saved).")
+    if gw:
+        try:
+            gwsc = score_gwatch_tracker(gwatch_mtime())
+        except Exception:
+            gwsc = None
+        if gwsc:
+            st.dataframe(
+                gwsc["detail"].sort_values("date"), hide_index=True,
+                use_container_width=True, column_config={
+                    "logged_price": st.column_config.NumberColumn("Pinned at", format="$%.2f"),
+                    "current_price": st.column_config.NumberColumn("Now", format="$%.2f"),
+                    "return_%": st.column_config.NumberColumn("Return", format="%+.1f%%"),
+                    "vs_SPY_%": st.column_config.NumberColumn("vs SPY", format="%+.1f%%"),
+                })
+            if gwsc["days_span"] < 14:
+                st.caption("⏳ Too fresh to read into — give it weeks.")
+        else:
+            st.caption("Pinned but not logged yet — click **Log pinned names now** above "
+                       "to start tracking where they go. (The Friday routine will keep them current after that.)")
+    else:
+        st.caption("No pinned names yet. Add tickers above, or open a mover below and add it here.")
+    st.divider()
 
     try:
         with st.spinner("Scanning small-caps…"):

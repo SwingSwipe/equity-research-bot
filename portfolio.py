@@ -174,14 +174,25 @@ def value_portfolio(port: dict = None) -> dict | None:
     tickers = [h["ticker"] for h in port["holdings"]]
     prices = _current_prices(tickers + ["SPY"])
 
-    rows, total_value, total_cost = [], 0.0, 0.0
+    rows, total_value, total_cost, unpriced = [], 0.0, 0.0, []
     for h in port["holdings"]:
         cur = prices.get(h["ticker"])
+        total_cost += h["alloc"]                  # full capital always counts, priced or not
         if cur is None:
+            # Couldn't fetch a price. Don't let the holding silently vanish (that
+            # would shrink the portfolio and misstate the return over the survivors).
+            # Hold it flat at its entry and flag it so the number stays honest.
+            unpriced.append(h["ticker"])
+            total_value += h["alloc"]
+            rows.append({
+                "Ticker": h["ticker"], "Entry": h["entry_price"], "Now": None,
+                "Shares": h["shares"], "Value": round(h["alloc"], 2),
+                "Return %": None, "P&L $": None,
+                "Valuation": h["valuation"], "Conf": h["confidence"],
+            })
             continue
         value = h["shares"] * cur
         total_value += value
-        total_cost += h["alloc"]
         rows.append({
             "Ticker": h["ticker"], "Entry": h["entry_price"], "Now": round(cur, 2),
             "Shares": h["shares"], "Value": round(value, 2),
@@ -202,6 +213,7 @@ def value_portfolio(port: dict = None) -> dict | None:
         "spy_return_pct": round(spy_ret * 100, 2) if spy_ret is not None else None,
         "excess_pct": round(excess * 100, 2) if excess is not None else None,
         "created": port.get("created"), "capital": port.get("capital", 1000),
+        "unpriced": unpriced,      # holdings held flat because no price could be fetched
     }
 
 

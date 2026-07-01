@@ -43,6 +43,37 @@ def save_watchlist(tickers) -> bool:
         return False
 
 
+GAMBLE_WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), "gamble_watchlist.json")
+
+
+def load_gamble_watchlist() -> list:
+    """Your PINNED speculative names -- a separate list from the main watchlist,
+    so gambles you follow don't get graded next to the disciplined picks. Starts
+    empty; you add to it deliberately."""
+    try:
+        with open(GAMBLE_WATCHLIST_FILE, "r") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [str(t).upper() for t in data]
+    except Exception:
+        pass
+    return []
+
+
+def save_gamble_watchlist(tickers) -> bool:
+    try:
+        cleaned = []
+        for t in tickers:
+            t = str(t).strip().upper()
+            if t and t not in cleaned:
+                cleaned.append(t)
+        with open(GAMBLE_WATCHLIST_FILE, "w") as f:
+            json.dump(cleaned, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 def parse_tickers(text: str) -> list:
     """Turn a free-text box ('AAPL, msft  TSLA') into a clean ticker list."""
     raw = text.replace("\n", ",").replace(" ", ",").split(",")

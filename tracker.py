@@ -30,9 +30,18 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "verdicts_log.csv")
 LOG_COLS = ["date", "ticker", "price", "stance", "valuation", "upside", "trend", "confidence"]
 
 
-def load_log() -> pd.DataFrame:
+def log_mtime() -> float:
+    """Last-modified time of the verdicts log (0.0 if none yet). Lets the app key
+    its cache on this, so a headless weekly auto-log auto-busts a stale scorecard."""
     try:
-        df = pd.read_csv(LOG_FILE)
+        return os.path.getmtime(LOG_FILE)
+    except OSError:
+        return 0.0
+
+
+def load_log(log_file: str = None) -> pd.DataFrame:
+    try:
+        df = pd.read_csv(log_file or LOG_FILE)
         if not df.empty:
             return df
     except Exception:
@@ -40,34 +49,84 @@ def load_log() -> pd.DataFrame:
     return pd.DataFrame(columns=LOG_COLS)
 
 
-def log_verdicts(board_rows) -> int:
-    """Append today's verdicts. Dedupe so re-logging the same day is harmless."""
+def _last_stance_by_ticker(log: pd.DataFrame) -> dict:
+    """Most recent logged stance for each ticker (by date). Empty if no log yet."""
+    if log.empty:
+        return {}
+    l = log.copy()
+    l["date"] = pd.to_datetime(l["date"])
+    l = l.sort_values("date")
+    return {tk: grp.iloc[-1]["stance"] for tk, grp in l.groupby("ticker")}
+
+
+def log_verdicts(board_rows, only_on_change: bool = True, log_file: str = None) -> dict:
+    """Record verdicts as a FORWARD track record.
+
+    By default this logs a row for a ticker ONLY when its stance has changed
+    since its last logged row (or the ticker is brand new). That's the honest
+    way to build a scorecard: one clean forward bet per actual DECISION, instead
+    of re-stamping the same standing opinion every week -- which would inflate
+    the sample with correlated, overlapping rows and make a tiny, unproven edge
+    look statistically solid. Pass only_on_change=False to force a full snapshot.
+
+    log_file lets a separate record (e.g. the pinned gamble watchlist) reuse this
+    exact machinery instead of duplicating it. Defaults to the main verdicts log.
+
+    Rows are still deduped on (date, ticker), so running twice in one day is
+    harmless. Returns {"logged": rows_written, "unchanged": rows_skipped}.
+    """
+    path = log_file or LOG_FILE
     today = datetime.today().strftime("%Y-%m-%d")
-    new = pd.DataFrame([{
-        "date": today,
-        "ticker": r["Ticker"],
-        "price": r["Price"],
-        "stance": r["Stance"],
-        "valuation": r["Valuation"],
-        "upside": r.get("Upside %"),
-        "trend": r["Trend"],
-        "confidence": r["Confidence"],
-    } for r in board_rows])
-    combined = pd.concat([load_log(), new], ignore_index=True)
-    combined = combined.drop_duplicates(subset=["date", "ticker"], keep="last")
-    combined.to_csv(LOG_FILE, index=False)
-    return len(new)
+    last = _last_stance_by_ticker(load_log(path)) if only_on_change else {}
+
+    to_log, unchanged = [], 0
+    for r in board_rows:
+        price = r.get("Price")
+        if price is None or pd.isna(price) or price <= 0:
+            continue                              # a priceless row is an ungradeable bet -- skip it
+        if only_on_change and last.get(r["Ticker"]) == r["Stance"]:
+            unchanged += 1
+            continue
+        to_log.append({
+            "date": today,
+            "ticker": r["Ticker"],
+            "price": r["Price"],
+            "stance": r["Stance"],
+            "valuation": r["Valuation"],
+            "upside": r.get("Upside %"),
+            "trend": r["Trend"],
+            "confidence": r["Confidence"],
+        })
+
+    if to_log:
+        combined = pd.concat([load_log(path), pd.DataFrame(to_log)], ignore_index=True)
+        combined = combined.drop_duplicates(subset=["date", "ticker"], keep="last")
+        combined.to_csv(path, index=False)
+    return {"logged": len(to_log), "unchanged": unchanged}
 
 
-def score_log() -> dict | None:
-    """Grade every logged verdict by its return-since vs the S&P 500."""
-    log = load_log()
+def score_log(log_file: str = None) -> dict | None:
+    """Grade every logged verdict by its return-since vs the S&P 500.
+
+    Both legs -- the stock and SPY -- are measured from the SAME price basis:
+    yfinance's split/dividend-adjusted close on the verdict's log date (via
+    asof) through to the latest close. We grade the ENTRY from that adjusted
+    series rather than from the raw quote we happened to log, so numerator and
+    denominator share one adjustment basis; a split or dividend in the window
+    can't manufacture a phantom return. The raw logged quote stays in the CSV as
+    an audit trail. Verdicts we can't price (unknown ticker, or logged before the
+    first available bar) are counted in `ungraded`, never silently dropped.
+    """
+    log = load_log(log_file)
     if log.empty:
         return None
     log = log.copy()
     log["date"] = pd.to_datetime(log["date"])
     tickers = sorted(log["ticker"].unique().tolist())
-    start = log["date"].min().strftime("%Y-%m-%d")
+    # Buffer the download start a week before the earliest log date so asof()
+    # always has a bar on/before it -- otherwise a verdict logged on a weekend or
+    # near the data boundary gets a NaN baseline and vanishes from the scorecard.
+    start = (log["date"].min() - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
 
     try:
         data = yf.download(tickers + ["SPY"], start=start, progress=False)["Close"]
@@ -83,27 +142,29 @@ def score_log() -> dict | None:
     spy_now = spy.iloc[-1]
     last_day = data.index[-1]
 
-    rows = []
+    rows, ungraded = [], 0
     for _, r in log.iterrows():
         tk = r["ticker"]
-        if tk not in data.columns:
-            continue
-        series = data[tk].dropna()
-        if series.empty or not r["price"]:
+        series = data[tk].dropna() if tk in data.columns else pd.Series(dtype=float)
+        entry = series.asof(r["date"]) if not series.empty else None   # adj close on log date
+        if entry is None or pd.isna(entry) or entry <= 0:
+            ungraded += 1                          # can't price this verdict -- count it, don't hide it
             continue
         cur = series.iloc[-1]
-        stock_ret = cur / r["price"] - 1
-        spy_at = spy.asof(r["date"])              # SPY level on the log date
-        spy_ret = (spy_now / spy_at - 1) if spy_at == spy_at else None
+        stock_ret = cur / entry - 1
+        spy_at = spy.asof(r["date"])              # SPY level on the same log date
+        spy_ret = (spy_now / spy_at - 1) if pd.notna(spy_at) else None
         excess = (stock_ret - spy_ret) if spy_ret is not None else None
         rows.append({
             "date": r["date"].strftime("%Y-%m-%d"),
             "ticker": tk, "stance": r["stance"], "valuation": r["valuation"],
             "trend": r["trend"], "confidence": r["confidence"],
-            "logged_price": round(r["price"], 2), "current_price": round(cur, 2),
+            "logged_price": round(entry, 2), "current_price": round(cur, 2),
             "return_%": round(stock_ret * 100, 1),
             "vs_SPY_%": round(excess * 100, 1) if excess is not None else None,
-            "days": (last_day - r["date"]).days,
+            # clamp at 0: a verdict logged today, before today's bar publishes,
+            # would otherwise read as -1 days old against the last available bar.
+            "days": max(0, (last_day - r["date"]).days),
         })
 
     detail = pd.DataFrame(rows)
@@ -120,10 +181,44 @@ def score_log() -> dict | None:
 
     return {"detail": detail, "summary": summary,
             "days_span": int(detail["days"].max()) if not detail.empty else 0,
-            "n": len(detail)}
+            "n": len(detail), "ungraded": ungraded}
+
+
+# ---------------------------------------------------------------------------
+# Pinned gamble watchlist -- a SEPARATE forward record for speculative names you
+# want to follow deliberately, kept apart from the main verdict log so gambles
+# don't muddy the "is the disciplined process working" signal. Same engine, same
+# honest vs-SPY grading; just a different file.
+# ---------------------------------------------------------------------------
+GWATCH_LOG = os.path.join(os.path.dirname(__file__), "gamble_watch_log.csv")
+
+
+def gwatch_mtime() -> float:
+    try:
+        return os.path.getmtime(GWATCH_LOG)
+    except OSError:
+        return 0.0
+
+
+def log_gamble_watch(board_rows) -> dict:
+    """Forward-log your pinned gamble names (change-only), into their own log."""
+    return log_verdicts(board_rows, log_file=GWATCH_LOG)
+
+
+def score_gamble_watch() -> dict | None:
+    """Grade the pinned gamble names' returns-since vs SPY, same as score_log."""
+    return score_log(log_file=GWATCH_LOG)
 
 
 GAMBLE_LOG = os.path.join(os.path.dirname(__file__), "gamble_log.csv")
+
+
+def gamble_mtime() -> float:
+    """Last-modified time of the gamble log (0.0 if none yet) -- for cache keying."""
+    try:
+        return os.path.getmtime(GAMBLE_LOG)
+    except OSError:
+        return 0.0
 
 
 def log_gamble(sc_df) -> int:
@@ -181,7 +276,8 @@ if __name__ == "__main__":
     from valuation import build_board
     print("Logging a few test verdicts…")
     rows = build_board(["AAPL", "NVDA", "PFE", "KO"])
-    print("logged:", log_verdicts(rows))
+    res = log_verdicts(rows)
+    print(f"logged: {res['logged']} new/changed, {res['unchanged']} unchanged")
     s = score_log()
     if s:
         print(f"\n{s['n']} verdicts · {s['days_span']} days span")
